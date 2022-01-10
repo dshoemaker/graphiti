@@ -72,6 +72,11 @@ module Graphiti
     ensure
       send(:"#{key}=", original)
     end
+
+    # do nothing by default
+    def around_generator_hook
+      yield
+    end
   end
 
   msg = "Use graphiti-rails's `config.graphiti.respond_to_formats`"
