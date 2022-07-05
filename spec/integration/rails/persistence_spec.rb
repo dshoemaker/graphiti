@@ -755,6 +755,12 @@ if ENV["APPRAISAL_INITIALIZED"]
                 data: [
                   {type: "teams", 'temp-id': "team1", method: "create"}
                 ]
+              },
+              personal_documents: {
+                data: [
+                  {type: "personal_documents", 'temp-id': "doc1", method: "create"},
+                  {type: "personal_documents", 'temp-id': "doc2", method: "create"}
+                ]
               }
             }
           },
@@ -783,6 +789,16 @@ if ENV["APPRAISAL_INITIALIZED"]
               type: "teams",
               'temp-id': "team1",
               attributes: {name: "Team 1"}
+            },
+            {
+              type: "personal_documents",
+              'temp-id': "doc1",
+              attributes: { document_name: "Document 1"}
+            },
+            {
+              type: "personal_documents",
+              'temp-id': "doc2",
+              attributes: { document_name: "Document 2"}
             }
           ]
         }

@@ -3,6 +3,11 @@ ActiveRecord::Schema.define(version: 1) do
     t.string :description
   end
 
+  create_table :personal_documents do |t|
+    t.string :document_name
+    t.integer :employee_id
+  end
+
   create_table :offices do |t|
     t.string :address
   end
@@ -129,6 +134,7 @@ class Employee < ApplicationRecord
   has_many :bugs
   has_many :features
   has_many :notes, as: :notable
+  has_many :documents, class_name: "PersonalDocument"
   has_one :location, as: :locatable
   validates :first_name, presence: true
   validates :delete_confirmation,
@@ -149,6 +155,10 @@ class Employee < ApplicationRecord
       errors.blank?
     end
   end
+end
+
+class PersonalDocument < ApplicationRecord
+  belongs_to :employee
 end
 
 class Position < ApplicationRecord
@@ -220,6 +230,12 @@ class SalaryResource < ApplicationResource
   attribute :overtime_rate, :float
 end
 
+class PersonalDocumentResource < ApplicationResource
+  belongs_to :employee
+
+  attribute :document_name, :string
+end
+
 class EmployeeResource < ApplicationResource
   attribute :first_name, :string, description: "The employee's first name"
   attribute :last_name, :string, description: "The employee's last name"
@@ -231,6 +247,7 @@ class EmployeeResource < ApplicationResource
 
   has_many :positions
   has_many :tasks
+  has_many :personal_documents, as: :documents
   has_one :salary
   belongs_to :classification
   many_to_many :teams, description: "Teams the employee belongs to"
