@@ -13,14 +13,14 @@ RSpec.describe "serialization" do
 
   let!(:employee1) do
     PORO::Employee.create first_name: "John",
-      years_employed: 1
+      years_employed: 1,
       last_name: "Doe",
       age: 33
   end
   let!(:employee2) do
     PORO::Employee.create first_name: "Jane",
       last_name: "Dougherty",
-      age: 44
+      age: 44,
       years_employed: 2
   end
   let!(:position1) do
