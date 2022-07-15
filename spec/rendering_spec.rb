@@ -13,27 +13,27 @@ RSpec.describe "serialization" do
 
   let!(:employee1) do
     PORO::Employee.create first_name: "John",
-                          last_name: "Doe",
-                          age: 33,
-                          years_employed: 1
+      years_employed: 1
+      last_name: "Doe",
+      age: 33
   end
   let!(:employee2) do
     PORO::Employee.create first_name: "Jane",
-                          last_name: "Dougherty",
-                          age: 44,
-                          years_employed: 2
+      last_name: "Dougherty",
+      age: 44
+      years_employed: 2
   end
   let!(:position1) do
     PORO::Position.create title: "title1",
-                          rank: 1,
-                          employee_id: 1,
-                          department_id: 1
+      rank: 1,
+      employee_id: 1,
+      department_id: 1
   end
   let!(:position2) do
     PORO::Position.create title: "title2",
-                          rank: 2,
-                          employee_id: 2,
-                          department_id: 2
+      rank: 2,
+      employee_id: 2,
+      department_id: 2
   end
   let!(:department1) do
     PORO::Department.create(name: "dep1", description: "dep1desc")
@@ -591,6 +591,21 @@ RSpec.describe "serialization" do
               name: "dep1"
             }
           }])
+        end
+      end
+
+      context "when a multi-word stat" do
+        before do
+          resource.stat multi_word: [:average] do
+            average do
+              10
+            end
+          end
+          params[:stats] = {multi_word: "average"}
+        end
+
+        it "is camelized" do
+          expect(json[:employees][:stats].keys.first).to eq(:multiWord)
         end
       end
     end
