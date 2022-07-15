@@ -288,11 +288,11 @@ if ENV["APPRAISAL_INITIALIZED"]
             expect(ids).to eq([author2.id, author3.id])
           end
 
-          context 'when column is aliased by the resource' do
-            let(:value) { { eq: 'Stephen' } }
-            let(:filter) { { first_name_aliased_by_resource: value } }
+          context "when column is aliased by the resource" do
+            let(:value) { {eq: "Stephen"} }
+            let(:filter) { {first_name_aliased_by_resource: value} }
 
-            it 'filters the attribute based on the aliased_of' do
+            it "filters the attribute based on the aliased_of" do
               expect(ids).to eq([author1.id])
             end
           end

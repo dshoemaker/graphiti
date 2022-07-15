@@ -200,7 +200,6 @@ module PORO
       :things,
       :years_employed
 
-
     def initialize(*)
       super
       @positions ||= []

@@ -87,9 +87,9 @@ if ENV["APPRAISAL_INITIALIZED"]
               data: {
                 type: "employees",
                 attributes: {
-                  first_name: 'joe',
-                  last_name: 'blow',
-                  mname: 'gregory'
+                  first_name: "joe",
+                  last_name: "blow",
+                  mname: "gregory"
                 }
               }
             }

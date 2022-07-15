@@ -531,7 +531,7 @@ RSpec.describe Graphiti::Query do
                 positions: {
                   include: {
                     department: {
-                      sort: [{name: :desc},{number_of_employees: :asc}]
+                      sort: [{name: :desc}, {number_of_employees: :asc}]
                     }
                   }
                 }

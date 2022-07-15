@@ -171,9 +171,9 @@ module Graphiti
         [].tap do |arr|
           sort_hashes do |key, value, type|
             if legacy_nested?(type)
-              arr << { sort_key(key) => value}
+              arr << {sort_key(key) => value}
             elsif !type && top_level? && validate!(key, :sortable)
-              arr << { sort_key(key) => value}
+              arr << {sort_key(key) => value}
             elsif nested?("#{type}.#{key}")
               arr << {sort_key(key) => value}
             end

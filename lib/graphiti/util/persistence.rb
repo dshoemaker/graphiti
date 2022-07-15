@@ -25,7 +25,7 @@ class Graphiti::Util::Persistence
   end
 
   def process_attributes!
-    @resource.class.config[:attributes].each do |k,v|
+    @resource.class.config[:attributes].each do |k, v|
       next unless @attributes.has_key?(k)
 
       @attributes[v[:alias_of]] = @attributes.delete(k) if v[:alias_of].present?

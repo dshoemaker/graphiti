@@ -1812,13 +1812,13 @@ RSpec.describe "serialization" do
         resource.class_eval do
           attribute :first_name, :string
           attribute :things, :string, readable: :admin? do
-            'things!'
+            "things!"
           end
           def admin?
             false
           end
           has_many :things, resource: PORO::PositionResource,
-            foreign_key: :employee_id
+                            foreign_key: :employee_id
         end
       end
 
