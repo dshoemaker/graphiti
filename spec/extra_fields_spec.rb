@@ -19,14 +19,14 @@ RSpec.describe "extra_fields" do
 
   it "does not include extra fields when not requested" do
     render
-    expect(attributes.keys).to match_array(%w[first_name last_name age])
+    expect(attributes.keys).to match_array(%w[first_name last_name age tenure])
   end
 
   it "includes the extra fields in the response when requested" do
     params[:extra_fields] = {employees: "stack_ranking"}
     render
     expect(attributes.keys)
-      .to match_array(%w[first_name last_name age stack_ranking])
+      .to match_array(%w[first_name last_name age tenure stack_ranking])
   end
 
   context "when sideloading/linking" do
@@ -82,7 +82,7 @@ RSpec.describe "extra_fields" do
       context "when not requested" do
         it "does not render them" do
           render
-          expect(attributes.keys).to match_array(%w[first_name last_name age])
+          expect(attributes.keys).to match_array(%w[first_name last_name age tenure])
         end
       end
 
@@ -93,7 +93,7 @@ RSpec.describe "extra_fields" do
 
         it "is rendered" do
           render
-          expect(attributes.keys).to match_array(%w[first_name last_name age b])
+          expect(attributes.keys).to match_array(%w[first_name last_name age tenure b])
         end
       end
     end
@@ -109,7 +109,7 @@ RSpec.describe "extra_fields" do
       context "when not requested" do
         it "does not render them" do
           render
-          expect(attributes.keys).to match_array(%w[first_name last_name age])
+          expect(attributes.keys).to match_array(%w[first_name last_name age tenure])
         end
       end
 
@@ -120,7 +120,7 @@ RSpec.describe "extra_fields" do
 
         it "is rendered" do
           render
-          expect(attributes.keys).to match_array(%w[first_name last_name age b])
+          expect(attributes.keys).to match_array(%w[first_name last_name age tenure b])
         end
       end
     end

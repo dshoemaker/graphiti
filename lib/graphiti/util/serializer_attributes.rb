@@ -120,7 +120,8 @@ module Graphiti
       end
 
       def default_proc
-        name_ref = @name
+        name_ref = @attr[:alias_of] || @name
+
         typecast_ref = typecast(Graphiti::Types[@attr[:type]][:read])
         ->(_) {
           val = @object.send(name_ref)

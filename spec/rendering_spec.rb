@@ -14,12 +14,14 @@ RSpec.describe "serialization" do
   let!(:employee1) do
     PORO::Employee.create first_name: "John",
                           last_name: "Doe",
-                          age: 33
+                          age: 33,
+                          years_employed: 1
   end
   let!(:employee2) do
     PORO::Employee.create first_name: "Jane",
                           last_name: "Dougherty",
-                          age: 44
+                          age: 44,
+                          years_employed: 2
   end
   let!(:position1) do
     PORO::Position.create title: "title1",
@@ -78,13 +80,15 @@ RSpec.describe "serialization" do
         "id" => "1",
         "first_name" => "John",
         "last_name" => "Doe",
-        "age" => 33
+        "age" => 33,
+        "tenure" => 1
       })
       expect(json[1]).to eq({
         "id" => "2",
         "first_name" => "Jane",
         "last_name" => "Dougherty",
-        "age" => 44
+        "age" => 44,
+        "tenure" => 2
       })
     end
 
@@ -163,13 +167,15 @@ RSpec.describe "serialization" do
           "id" => "1",
           "title" => "title1",
           "rank" => 1,
-          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc"}
+          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc"},
+          "internal_crm_id" => nil
         ])
         expect(json[1]["positions"]).to eq([
           "id" => "2",
           "title" => "title2",
           "rank" => 2,
-          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc"}
+          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc"},
+          "internal_crm_id" => nil
         ])
       end
 
@@ -579,6 +585,7 @@ RSpec.describe "serialization" do
           expect(employee[:importantPositions][:nodes]).to eq([{
             rank: 1,
             title: "title1",
+            internalCrmId: nil,
             importantDepartment: {
               description: "dep1desc",
               name: "dep1"
@@ -598,13 +605,15 @@ RSpec.describe "serialization" do
         "id" => "1",
         "first_name" => "John",
         "last_name" => "Doe",
-        "age" => 33
+        "age" => 33,
+        "tenure" => 1
       })
       expect(xml[1]).to eq({
         "id" => "2",
         "first_name" => "Jane",
         "last_name" => "Dougherty",
-        "age" => 44
+        "age" => 44,
+        "tenure" => 2
       })
     end
 
@@ -619,13 +628,15 @@ RSpec.describe "serialization" do
           "id" => "1",
           "title" => "title1",
           "rank" => 1,
-          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc"}
+          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc"},
+          "internal_crm_id" => nil
         ])
         expect(xml[1]["positions"]).to eq([
           "id" => "2",
           "title" => "title2",
           "rank" => 2,
-          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc"}
+          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc"},
+          "internal_crm_id" => nil
         ])
       end
     end

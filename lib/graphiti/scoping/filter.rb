@@ -39,7 +39,7 @@ module Graphiti
     def filter_via_adapter(filter, operator, value)
       type_name = Types.name_for(filter.values.first[:type])
       method = :"filter_#{type_name}_#{operator}"
-      attribute = filter.keys.first
+      attribute = filter.values.first[:alias_of] || filter.keys.first
 
       if resource.adapter.respond_to?(method)
         resource.adapter.send(method, @scope, attribute, value)

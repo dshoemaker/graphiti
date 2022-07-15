@@ -80,6 +80,38 @@ if ENV["APPRAISAL_INITIALIZED"]
             })
           end
         end
+
+        context "when aliased attribute is written to" do
+          let(:payload) do
+            {
+              data: {
+                type: "employees",
+                attributes: {
+                  first_name: 'joe',
+                  last_name: 'blow',
+                  mname: 'gregory'
+                }
+              }
+            }
+          end
+
+          it "should write to the actual column through the aliased attribute" do
+            make_request
+
+            expect(jsonapi_data.attributes).to eq(
+              {
+                "id" => Employee.last.id.to_s,
+                "jsonapi_type" => "employees",
+                "first_name" => "joe",
+                "mname" => "gregory",
+                "last_name" => "blow",
+                "age" => nil
+              }
+            )
+
+            expect(Employee.last.middle_name).to eq(jsonapi_data.attributes["mname"])
+          end
+        end
       end
 
       describe "nested create" do
@@ -189,7 +221,7 @@ if ENV["APPRAISAL_INITIALIZED"]
       let(:path) { "/employees/#{employee.id}" }
 
       let(:employee) do
-        Employee.create(first_name: "Joe", last_name: "Blow", nickname: "Slugger")
+        Employee.create(first_name: "Joe", last_name: "Blow", nickname: "Slugger", document: "foo")
       end
 
       let(:payload) do
@@ -243,6 +275,22 @@ if ENV["APPRAISAL_INITIALIZED"]
             "jsonapi_type" => "salaries",
             "base_rate" => 80.0
           })
+        end
+
+        context "aliased extra fields" do
+          let(:params) do
+            {
+              extra_fields: {
+                employees: "document_upload"
+              }
+            }
+          end
+
+          it "includes extra fields requested" do
+            make_request
+
+            expect(jsonapi_data.attributes).to match(hash_including("document_upload" => employee.document))
+          end
         end
       end
 

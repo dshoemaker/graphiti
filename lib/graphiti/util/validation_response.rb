@@ -14,9 +14,10 @@ class Graphiti::Util::ValidationResponse
 
   # @param object the model instance we tried to save
   # @param deserialized_params see Base#deserialized_params
-  def initialize(object, deserialized_params)
+  def initialize(object, deserialized_params, root_resource)
     @object = object
     @deserialized_params = deserialized_params
+    @root_resource = root_resource
   end
 
   # Check to ensure no validation errors.

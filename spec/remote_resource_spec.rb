@@ -254,6 +254,7 @@ RSpec.describe "remote resources" do
       end
 
       it "queries correctly" do
+
         assert_params("page[size]=999&sort=-first_name,last_name")
       end
     end
