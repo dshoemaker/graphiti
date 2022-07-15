@@ -167,14 +167,14 @@ RSpec.describe "serialization" do
           "id" => "1",
           "title" => "title1",
           "rank" => 1,
-          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc"},
+          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc", "head_count" => nil},
           "internal_crm_id" => nil
         ])
         expect(json[1]["positions"]).to eq([
           "id" => "2",
           "title" => "title2",
           "rank" => 2,
-          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc"},
+          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc", "head_count" => nil},
           "internal_crm_id" => nil
         ])
       end
@@ -283,7 +283,7 @@ RSpec.describe "serialization" do
           it "works" do
             level1 = json[0]["positions"][0]["department"]
             level2 = level1["positions"][0]["department"]
-            expect(level1.keys).to match_array(%w[id name description positions])
+            expect(level1.keys).to match_array(%w[id name description positions head_count])
             expect(level2.keys).to match_array(%w[id description])
           end
 
@@ -302,8 +302,8 @@ RSpec.describe "serialization" do
               level1b = json[0]["positions"][1]["department"]
               level2a = level1a["positions"][0]["department"]
               level2b = level1b["positions"][0]["department"]
-              expect(level1a.keys).to match_array(%w[id name description positions])
-              expect(level1b.keys).to match_array(%w[id name description positions])
+              expect(level1a.keys).to match_array(%w[id name description positions head_count])
+              expect(level1b.keys).to match_array(%w[id name description positions head_count])
               expect(level2a.keys).to match_array(%w[id description])
               expect(level2b.keys).to match_array(%w[id description])
             end
@@ -588,7 +588,8 @@ RSpec.describe "serialization" do
             internalCrmId: nil,
             importantDepartment: {
               description: "dep1desc",
-              name: "dep1"
+              name: "dep1",
+              headCount: nil
             }
           }])
         end
@@ -628,14 +629,14 @@ RSpec.describe "serialization" do
           "id" => "1",
           "title" => "title1",
           "rank" => 1,
-          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc"},
+          "department" => {"id" => "1", "name" => "dep1", "description" => "dep1desc", "head_count" => nil},
           "internal_crm_id" => nil
         ])
         expect(xml[1]["positions"]).to eq([
           "id" => "2",
           "title" => "title2",
           "rank" => 2,
-          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc"},
+          "department" => {"id" => "2", "name" => "dep2", "description" => "dep2desc", "head_count" => nil},
           "internal_crm_id" => nil
         ])
       end
