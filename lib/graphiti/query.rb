@@ -165,22 +165,18 @@ module Graphiti
         [].tap do |arr|
           sort_hashes do |key, value, type|
             if legacy_nested?(type)
-              arr << {sort_key(key) => value}
+              unless @resource.remote?
+                @resource.get_attr!(key, :sortable, request: true)
+              end
+              arr << {key => value}
             elsif !type && top_level? && validate!(key, :sortable)
-              arr << {sort_key(key) => value}
+              arr << {key => value}
             elsif nested?("#{type}.#{key}")
-              arr << {sort_key(key) => value}
+              arr << {key => value}
             end
           end
         end
       end
-    end
-
-    def sort_key(key)
-      return key if @resource.remote?
-
-      attribute = @resource.get_attr!(key, :sortable, request: true) || {}
-      attribute[:alias_of] || key
     end
 
     def pagination
