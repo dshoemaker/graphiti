@@ -143,7 +143,7 @@ module Graphiti
         model.instance_variable_set(:@__serializer_klass, @resource.serializer)
         @resource.after_graph_persist(model, metadata)
         validator = ::Graphiti::Util::ValidationResponse.new \
-          model, @payload
+          model, @payload, @resource
         validator.validate!
         @resource.before_commit(model, metadata)
 
@@ -158,7 +158,7 @@ module Graphiti
       save(action: :update)
     end
 
-    alias update_attributes update
+    alias_method :update_attributes, :update
 
     def include_hash
       @include_hash ||= begin
@@ -187,7 +187,7 @@ module Graphiti
           model = yield
           ::Graphiti::Util::TransactionHooksRecorder.run_graph_persist_hooks
           validator = ::Graphiti::Util::ValidationResponse.new \
-            model, @payload
+            model, @payload, @resource
           validator.validate!
           validator
         end

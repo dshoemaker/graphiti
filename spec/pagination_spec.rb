@@ -1,3 +1,4 @@
+require "base64"
 require "spec_helper"
 
 RSpec.describe "pagination" do

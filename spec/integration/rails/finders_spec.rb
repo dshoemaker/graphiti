@@ -48,6 +48,7 @@ if ENV["APPRAISAL_INITIALIZED"]
         created_at_date: two_days_ago.to_date,
         identifier: SecureRandom.uuid
     end
+
     let!(:book1) { Legacy::Book.create!(author: author1, genre: genre, title: "The Shining") }
     let!(:book2) { Legacy::Book.create!(author: author1, genre: genre, title: "The Stand") }
     let!(:state) { Legacy::State.create!(name: "Maine") }
@@ -71,6 +72,11 @@ if ENV["APPRAISAL_INITIALIZED"]
 
     it "allows basic sorting" do
       do_index({sort: "-id"})
+      expect(d.map(&:id)).to eq([author2.id, author1.id])
+    end
+
+    it "allows sorting on aliased attributes" do
+      do_index({sort: "first_name_aliased_by_resource"})
       expect(d.map(&:id)).to eq([author2.id, author1.id])
     end
 
@@ -280,6 +286,15 @@ if ENV["APPRAISAL_INITIALIZED"]
 
           it "executes case-insensitive search" do
             expect(ids).to eq([author2.id, author3.id])
+          end
+
+          context "when column is aliased by the resource" do
+            let(:value) { {eq: "Stephen"} }
+            let(:filter) { {first_name_aliased_by_resource: value} }
+
+            it "filters the attribute based on the aliased_of" do
+              expect(ids).to eq([author1.id])
+            end
           end
         end
 
@@ -994,7 +1009,8 @@ if ENV["APPRAISAL_INITIALIZED"]
           "birthdays" => 70, # alias
           "float_age" => 70.03,
           "decimal_age" => "70.033",
-          "active" => true
+          "active" => true,
+          "first_name_aliased_by_resource" => "Stephen"
         })
         expect(included.map(&:jsonapi_type).uniq).to match_array(%w[books])
       end

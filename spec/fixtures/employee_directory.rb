@@ -19,6 +19,7 @@ ActiveRecord::Schema.define(version: 1) do
     t.integer :employee_id
     t.string :type
     t.string :name
+    t.integer :number
   end
 
   create_table :notes do |t|
@@ -42,6 +43,8 @@ ActiveRecord::Schema.define(version: 1) do
     t.string :nickname
     t.string :salutation
     t.string :professional_titles
+    t.string :middle_name
+    t.string :document
   end
 
   create_table :positions do |t|
@@ -193,6 +196,7 @@ end
 class TaskResource < ApplicationResource
   self.polymorphic = %w[BugResource FeatureResource]
   attribute :name, :string
+  attribute :job_number, :integer, alias_of: :number
   attribute :employee_id, :string, only: [:writable]
 end
 
@@ -224,10 +228,12 @@ class EmployeeResource < ApplicationResource
   attribute :first_name, :string, description: "The employee's first name"
   attribute :last_name, :string, description: "The employee's last name"
   attribute :age, :integer
+  attribute :mname, :string, alias_of: :middle_name
 
   extra_attribute :nickname, :string
   extra_attribute :salutation, :string
   extra_attribute :professional_titles, :string
+  extra_attribute :document_upload, :string, alias_of: :document
 
   has_many :positions
   has_many :tasks

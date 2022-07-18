@@ -22,7 +22,7 @@ module Graphiti
     # @return the scope we are chaining/modifying
     def apply_standard_scope
       each_sort do |attribute, direction|
-        resource.get_attr!(attribute, :sortable, request: true)
+        attr_opts = resource.get_attr!(attribute, :sortable, request: true)
         sort = resource.sorts[attribute]
         if sort[:only] && sort[:only] != direction
           raise Errors::UnsupportedSort.new resource,
@@ -31,7 +31,7 @@ module Graphiti
           @scope = if sort[:proc]
             resource.instance_exec(@scope, direction, &sort[:proc])
           else
-            resource.adapter.order(@scope, attribute, direction)
+            resource.adapter.order(@scope, attr_opts[:alias_of] || attribute, direction)
           end
         end
       end

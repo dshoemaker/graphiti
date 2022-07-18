@@ -13,7 +13,7 @@ RSpec.describe "fields" do
 
   it "does not limit without fields param" do
     render
-    expect(attributes.keys).to eq(%w[first_name last_name age])
+    expect(attributes.keys).to eq(%w[first_name last_name age tenure])
   end
 
   it "limits to only the requested fields" do

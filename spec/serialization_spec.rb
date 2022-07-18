@@ -1782,7 +1782,8 @@ RSpec.describe "serialization" do
           expect(json[:positions]).to eq([{
             id: position.id.to_s,
             title: "foo",
-            rank: nil
+            rank: nil,
+            internal_crm_id: nil
           }])
         end
       end
@@ -1861,7 +1862,8 @@ RSpec.describe "serialization" do
             expect(json[:things]).to eq([{
               id: position.id.to_s,
               title: "foo",
-              rank: nil
+              rank: nil,
+              internal_crm_id: nil
             }])
           end
         end

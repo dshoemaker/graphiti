@@ -337,6 +337,7 @@ module Legacy
     attribute :created_at, :datetime, only: [:filterable]
     attribute :created_at_date, :date, only: [:filterable]
     attribute :identifier, :uuid
+    attribute :first_name_aliased_by_resource, :string, alias_of: :first_name
 
     filter :last_login, allow_nil: true
 

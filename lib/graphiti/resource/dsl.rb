@@ -30,6 +30,7 @@ module Graphiti
             schema = !!opts[:via_attribute_dsl] ? att[:schema] : opts[:schema] != false
 
             config[:filters][name.to_sym] = {
+              alias_of: opts[:alias_of],
               aliases: aliases,
               name: name.to_sym,
               type: type_override || att[:type],
@@ -137,7 +138,7 @@ module Graphiti
           options[:sortable] ? sort(name) : config[:sorts].delete(name)
 
           if options[:filterable]
-            filter(name, allow: options[:allow], via_attribute_dsl: true)
+            filter(name, alias_of: options[:alias_of], allow: options[:allow], via_attribute_dsl: true)
           else
             config[:filters].delete(name)
           end

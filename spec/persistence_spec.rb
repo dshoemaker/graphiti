@@ -5,7 +5,9 @@ RSpec.describe "persistence" do
     {
       data: {
         type: "employees",
-        attributes: {first_name: "Jane"}
+        attributes: {
+          first_name: "Jane"
+        }
       }
     }
   end
@@ -225,7 +227,7 @@ RSpec.describe "persistence" do
 
             it "yields attributes" do
               employee
-              expect(klass.calls[0][:args]).to eq([{first_name: "Jane"}])
+              expect(klass.calls[0][:args]).to eq([first_name: "Jane"])
             end
 
             it "can modify attributes" do
@@ -239,7 +241,7 @@ RSpec.describe "persistence" do
 
           it "yields attributes" do
             employee
-            expect(klass.calls[0][:args]).to eq([{first_name: "Jane"}])
+            expect(klass.calls[0][:args]).to eq([first_name: "Jane"])
           end
 
           it "can modify attributes" do
@@ -407,7 +409,7 @@ RSpec.describe "persistence" do
 
             it "is passed attributes" do
               employee
-              expect(klass.calls[0][:args]).to eq([{first_name: "Jane"}])
+              expect(klass.calls[0][:args]).to eq([first_name: "Jane"])
             end
 
             it "can modify the attribute hash" do
@@ -425,7 +427,7 @@ RSpec.describe "persistence" do
 
           it "is passed attributes" do
             employee
-            expect(klass.calls[0][:args]).to eq([{first_name: "Jane"}])
+            expect(klass.calls[0][:args]).to eq([first_name: "Jane"])
           end
 
           it "can modify the attribute hash" do

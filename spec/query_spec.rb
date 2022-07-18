@@ -519,6 +519,30 @@ RSpec.describe Graphiti::Query do
         it "parses correctly" do
           expect(hash).to eq(expected)
         end
+
+        context "when sorting via nested dot syntax on aliased attribute" do
+          before do
+            params[:sort] = "-positions.department.name"
+          end
+
+          let(:expected) do
+            {
+              include: {
+                positions: {
+                  include: {
+                    department: {
+                      sort: [{name: :desc}]
+                    }
+                  }
+                }
+              }
+            }
+          end
+
+          it "parses correctly" do
+            expect(hash).to eq(expected)
+          end
+        end
       end
     end
 

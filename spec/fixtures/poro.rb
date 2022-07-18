@@ -196,7 +196,8 @@ module PORO
       :payment_processor,
       :salary,
       :credit_cards,
-      :things
+      :things,
+      :years_employed
 
     def initialize(*)
       super
@@ -213,7 +214,8 @@ module PORO
       :employee,
       :department_id,
       :department,
-      :important_department
+      :important_department,
+      :crm_id
   end
 
   class Classification < Base
@@ -221,7 +223,7 @@ module PORO
   end
 
   class Department < Base
-    attr_accessor :name, :description, :positions
+    attr_accessor :name, :description, :positions, :number_of_employees
   end
 
   class Bio < Base
@@ -387,6 +389,7 @@ module PORO
     attribute :first_name, :string
     attribute :last_name, :string
     attribute :age, :integer
+    attribute :tenure, :integer, alias_of: :years_employed
     extra_attribute :worth, :integer do
       100
     end
@@ -409,6 +412,7 @@ module PORO
     attribute :department_id, :integer, only: [:filterable]
     attribute :title, :string
     attribute :rank, :integer
+    attribute :internal_crm_id, :integer, alias_of: :crm_id
     extra_attribute :score, :integer do
       200
     end
@@ -421,6 +425,7 @@ module PORO
   class DepartmentResource < ApplicationResource
     attribute :name, :string
     attribute :description, :string
+    attribute :head_count, :integer, alias_of: :number_of_employees
 
     has_many :positions
   end
