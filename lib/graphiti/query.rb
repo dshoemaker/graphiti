@@ -106,7 +106,7 @@ module Graphiti
             # B) key == on__employees.positions
             # This way A) ensures sideloads are resolved
             # And B) ensures nested filters, sorts etc still work
-            relationship_name = sideload ? sideload.name : key
+            relationship_name = sideload ? sideload.association_name : key
             hash[relationship_name] = Query.new sl_resource,
               @params,
               key,
