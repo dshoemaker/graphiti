@@ -41,22 +41,32 @@ module Graphiti
       alias_method :filter_enum_not_eql, :filter_not_eq
 
       def filter_string_eq(scope, attribute, value, is_not: false)
+        return filter_string_eql(scope, attribute, nil, is_not: is_not) if Array(value).compact.blank?
+
         column = column_for(scope, attribute)
         clause = column.lower.eq_any(value.map(&:downcase))
         is_not ? scope.where.not(clause) : scope.where(clause)
       end
 
       def filter_string_eql(scope, attribute, value, is_not: false)
-        clause = {attribute => value}
+        clause = {attribute => value.presence}
         is_not ? scope.where.not(clause) : scope.where(clause)
       end
 
       def filter_string_not_eq(scope, attribute, value)
-        filter_string_eq(scope, attribute, value, is_not: true)
+        filter_string_eq(scope, attribute, value.presence, is_not: true)
       end
 
       def filter_string_not_eql(scope, attribute, value)
-        filter_string_eql(scope, attribute, value, is_not: true)
+        filter_string_eql(scope, attribute, value.presence, is_not: true)
+      end
+
+      def filter_public_id_eq(scope, attribute, value)
+        filter_string_eql(scope, attribute, value)
+      end
+
+      def filter_public_id_not_eq(scope, attribute, value)
+        filter_string_not_eql(scope, attribute, value)
       end
 
       # Arel has different match escaping behavior before rails 5.
@@ -196,7 +206,7 @@ module Graphiti
       # (see Adapters::Abstract#count)
       def count(scope, attr)
         if attr.to_sym == :total
-          scope.distinct.count(:all)
+          scope.distinct.count(distinct_count_column(scope))
         else
           scope.distinct.count(attr)
         end
@@ -244,7 +254,7 @@ module Graphiti
 
           children.each do |child|
             if association_type == :many_to_many &&
-                [:create, :update].include?(Graphiti.context[:namespace]) &&
+                [:create, :update].include?(Graphiti.context[:action]) &&
                 !parent.send(association_name).exists?(child.id) &&
                 child.errors.blank?
               parent.send(association_name) << child
@@ -279,18 +289,8 @@ module Graphiti
         # Nothing to do in the else case, happened when we merged foreign key
       end
 
-      # (see Adapters::Abstract#create)
-      def create(model_class, create_params)
-        instance = model_class.new(create_params)
-        instance.save
-        instance
-      end
-
-      # (see Adapters::Abstract#update)
-      def update(model_class, update_params)
-        instance = model_class.find(update_params.only(:id))
-        instance.update_attributes(update_params.except(:id))
-        instance
+      def polymorphic_type_value(parent_object)
+        parent_object.class.polymorphic_name
       end
 
       def save(model_instance)
@@ -304,7 +304,7 @@ module Graphiti
       end
 
       def close
-        if ::ActiveRecord.version > "7.2"
+        if ::ActiveRecord.version > Gem::Version.new("7.1")
           ::ActiveRecord::Base.connection_handler.clear_active_connections!
         else
           ::ActiveRecord::Base.clear_active_connections!
@@ -320,6 +320,13 @@ module Graphiti
       end
 
       private
+
+      def distinct_count_column(scope)
+        primary_key = scope.klass.primary_key
+        return :all unless primary_key.is_a?(String)
+
+        scope.klass.arel_table[primary_key]
+      end
 
       def column_for(scope, name)
         table = scope.klass.arel_table

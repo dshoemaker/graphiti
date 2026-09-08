@@ -97,6 +97,8 @@ module Graphiti
     end
 
     class UnsupportedOperator < Base
+      attr_reader :resource, :filter_name, :supported, :operator
+
       def initialize(resource, filter_name, supported, operator)
         @resource = resource
         @filter_name = filter_name
@@ -219,7 +221,7 @@ module Graphiti
 
           Make sure the endpoint "#{@sideload.resource.endpoint[:full_path]}" exists with action #{@action.inspect}, or customize the endpoint for #{@sideload.resource.class.name}.
 
-          If you do not wish to generate a link, pass link: false or set self.autolink = false.
+          If you do not wish to generate a link, pass link: false or set self.relationship_links = false. To keep the link and stop checking it, set self.validate_links = false.
         MSG
       end
     end
@@ -253,6 +255,8 @@ module Graphiti
           Graphiti.config.context_for_endpoint must be set to enable link generation:
 
           Graphiti.config.context_for_endpoint = ->(path, action) { ... }
+
+          Or set self.validate_links = false to render links without checking them.
         MSG
       end
     end
@@ -268,7 +272,7 @@ module Graphiti
           #{@resource_class.name}: error occurred while sideloading "#{@sideload_name}"!
 
           The error was raised while attempting to build query parameters for the associated Resource.
-          Read more about sideload scoping here: www.graphiti.dev/guides/concepts/resources#customizing-scope
+          Read more about sideload scoping here: graphiti.dev/concepts/relationships#customizing-scope
 
           A good way to debug is to put a debugger within the 'params' block.
 
@@ -292,7 +296,7 @@ module Graphiti
 
           The error was raised while attempting to build the scope for the associated Resource.
 
-          Read more about sideload scoping here: www.graphiti.dev/guides/concepts/resources#customizing-scope
+          Read more about sideload scoping here: graphiti.dev/concepts/relationships#customizing-scope
 
           Here's the original, underlying error:
 
@@ -313,7 +317,7 @@ module Graphiti
           #{@resource_class.name}: error occurred while sideloading "#{@sideload_name}"!
 
           The error was raised while attempting to assign relevant model instances. Read
-          more about sideload assignment here: www.graphiti.dev/guides/concepts/resources#customizing-assignment
+          more about sideload assignment here: graphiti.dev/concepts/relationships#customizing-assignment
 
           A good way to debug is to put a debugger within the 'assign' block.
 
@@ -443,6 +447,12 @@ module Graphiti
 
           secondary_endpoint '/my_url', [:index, :update]
 
+          Or disable request validation for this resource:
+
+          self.validate_requests = false
+
+          See https://graphiti.dev/concepts/links for more information.
+
           The current endpoints allowed for this resource are: #{@resource_class.endpoints.inspect}
         MSG
       end
@@ -456,6 +466,19 @@ module Graphiti
 
       def message
         "Type must be a Hash with keys #{Types::REQUIRED_KEYS.inspect}"
+      end
+    end
+
+    class InvalidWrapModel < Base
+      def initialize(resource_class, model)
+        @resource_class = resource_class
+        @model = model
+      end
+
+      def message
+        <<~MSG
+          #{@resource_class.name}.wrap was given a #{@model.class}, but this resource is for #{@resource_class.model} (subclasses are fine).
+        MSG
       end
     end
 
@@ -668,6 +691,135 @@ module Graphiti
       end
     end
 
+    class InvalidBelongsToResourceIds < Base
+      def initialize(resource_class, value)
+        @resource_class = resource_class
+        @value = value
+      end
+
+      def message
+        <<~MSG
+          #{@resource_class.name}: belongs_to_resource_ids_by_default must be one of :foreign_key, :always, or :never. Got #{@value.inspect}.
+
+            :foreign_key - render resource ids wherever the foreign key already holds the related id (default)
+            :always      - render them for every belongs_to, loading the association when the foreign key cannot answer
+            :never       - render none
+
+          To render resource ids for a collection, ask for it one relationship at a time with `resource_ids: true`.
+        MSG
+      end
+    end
+
+    class InvalidFilterBlanks < Base
+      def initialize(resource_class, attribute, value)
+        @resource_class = resource_class
+        @attribute = attribute
+        @value = value
+      end
+
+      def message
+        <<~MSG
+          #{@resource_class.name}: #{@attribute} must be one of :literal, :null, or :rejected. Got #{@value.inspect}.
+
+            :literal  - "null" and "" reach the filter as strings (default)
+            :null     - "null" becomes nil, so the filter can query for NULL
+            :rejected - a blank value raises InvalidFilterValue
+        MSG
+      end
+    end
+
+    class InvalidLinkRendering < Base
+      def initialize(resource_class, attribute, value)
+        @resource_class = resource_class
+        @attribute = attribute
+        @value = value
+      end
+
+      def message
+        "#{@resource_class.name}: #{@attribute} must be true, false, or :on_demand. Got #{@value.inspect}."
+      end
+    end
+
+    class ConflictingPublicIdSource < Base
+      def initialize(resource_class, filter_name, registered, claimant)
+        @resource_class = resource_class
+        @filter_name = filter_name
+        @registered = registered
+        @claimant = claimant
+      end
+
+      def message
+        "#{@resource_class.name}: filter #{@filter_name.inspect} already resolves public ids through #{@registered.name}, so #{@claimant.name} cannot claim it too. Give one of the relationships a different `inverse_filter`."
+      end
+    end
+
+    class InvalidPublicId < Base
+      def initialize(resource_class, reason)
+        @resource_class = resource_class
+        @reason = reason
+      end
+
+      def message
+        "#{@resource_class.name}: public_id #{@reason}."
+      end
+    end
+
+    class PublicIdLeak < Base
+      def initialize(resource_class, attribute_name, source_resource_class)
+        @resource_class = resource_class
+        @attribute_name = attribute_name
+        @source_resource_class = source_resource_class
+      end
+
+      def message
+        "#{@resource_class.name}: attribute #{@attribute_name.inspect} is readable, but it holds the primary key #{@source_resource_class.name} hides behind its public id. Declare it `only: [:filterable]` or drop it."
+      end
+    end
+
+    class UnselectedForeignKey < Base
+      def initialize(resource_class, sideload, model)
+        @resource_class = resource_class
+        @sideload = sideload
+        @model = model
+      end
+
+      def message
+        <<~MSG
+          #{@resource_class.name}: rendering resource linkage for relationship #{@sideload.name.inspect} reads ##{@sideload.foreign_key} off #{@model.class.name}, but that attribute is not loaded.
+
+          Keep #{@sideload.foreign_key} in the selected columns, or turn linkage off with `resource_ids: false` on the relationship or `self.belongs_to_resource_ids_by_default = :never` on the resource.
+        MSG
+      end
+    end
+
+    class MissingRelationshipMethod < Base
+      def initialize(resource_class, sideload, model)
+        @resource_class = resource_class
+        @sideload = sideload
+        @model = model
+      end
+
+      def message
+        <<~MSG
+          #{@resource_class.name}: relationship #{@sideload.name.inspect} is declared, but #{@model.class.name} has no ##{@sideload.association_name} method.
+
+          Rendering the relationship reads the association off the model. Define ##{@sideload.association_name} on #{@model.class.name}, point the relationship at the real association with `as:`, or remove the relationship.
+          #{resource_ids_note}
+        MSG
+      end
+
+      private
+
+      def resource_ids_note
+        return "" unless @sideload.render_resource_ids?
+
+        <<~MSG
+
+          resource_ids is set on this relationship, so every render reads the association, not just requests that include it. See graphiti.dev/concepts/relationships#customizing-relationships.
+        MSG
+      end
+    end
+
     class MissingDependentFilter < Base
       def initialize(resource, filters)
         @resource = resource
@@ -841,7 +993,7 @@ module Graphiti
       def initialize(resource, filter_names, required)
         @resource = resource
         @filter_names = filter_names
-        @required_label = required == :all ? "All" : "One"
+        @required_label = (required == :all) ? "All" : "One"
       end
 
       def message

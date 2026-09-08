@@ -68,7 +68,7 @@ RSpec.describe "sideloading" do
     it "works" do
       params[:include] = "positions"
       render
-      expect(included("positions").map(&:id)).to eq([1, 2])
+      expect(jsonapi_included("positions").map(&:id)).to eq([1, 2])
     end
 
     context "and deep querying" do
@@ -79,7 +79,7 @@ RSpec.describe "sideloading" do
 
       it "works" do
         render
-        expect(included("positions").map(&:id)).to eq([2, 1])
+        expect(jsonapi_included("positions").map(&:id)).to eq([2, 1])
       end
     end
 
@@ -171,7 +171,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("positions").map(&:id)).to eq([1, 2])
+      expect(jsonapi_included("positions").map(&:id)).to eq([1, 2])
     end
   end
 
@@ -196,7 +196,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("positions").map(&:id)).to eq([2, 1])
+      expect(jsonapi_included("positions").map(&:id)).to eq([2, 1])
     end
   end
 
@@ -210,7 +210,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("positions").map(&:id)).to eq([2, 1])
+      expect(jsonapi_included("positions").map(&:id)).to eq([2, 1])
     end
   end
 
@@ -231,7 +231,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("positions").map(&:id)).to eq([1, 2])
+      expect(jsonapi_included("positions").map(&:id)).to eq([1, 2])
     end
 
     context "when custom foreign key given" do
@@ -254,7 +254,7 @@ RSpec.describe "sideloading" do
 
       it "is used" do
         render
-        expect(included("positions").map(&:id)).to eq([1, 2])
+        expect(jsonapi_included("positions").map(&:id)).to eq([1, 2])
       end
     end
   end
@@ -286,7 +286,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("employees").map(&:id)).to eq([1])
+      expect(jsonapi_included("employees").map(&:id)).to eq([1])
     end
   end
 
@@ -308,7 +308,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("bios").map(&:id)).to eq([1])
+      expect(jsonapi_included("bios").map(&:id)).to eq([1])
     end
   end
 
@@ -330,7 +330,7 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("teams").map(&:id)).to eq([1, 2])
+      expect(jsonapi_included("teams").map(&:id)).to eq([1, 2])
     end
   end
 
@@ -364,14 +364,10 @@ RSpec.describe "sideloading" do
       expect(credit_card(1)).to eq({
         "type" => "mastercards", "id" => "1"
       })
-      expect(included[0].jsonapi_type).to eq("visas")
-      expect(included[0].relationships).to eq({
-        "visa_rewards" => {"meta" => {"included" => false}}
-      })
-      expect(included[1].jsonapi_type).to eq("mastercards")
-      expect(included[1].relationships).to eq({
-        "commercials" => {"meta" => {"included" => false}}
-      })
+      expect(jsonapi_included[0].jsonapi_type).to eq("visas")
+      expect(jsonapi_included[0].relationships).to eq({})
+      expect(jsonapi_included[1].jsonapi_type).to eq("mastercards")
+      expect(jsonapi_included[1].relationships).to eq({})
     end
 
     context "when defaults" do
@@ -421,9 +417,30 @@ RSpec.describe "sideloading" do
       end
     end
 
+    context "when multiple children error under concurrency" do
+      before do
+        allow(Graphiti.config).to receive(:concurrency).and_return(true)
+        resource.polymorphic_belongs_to :credit_card do
+          group_by(:credit_card_type, except: [:Paypal]) do
+            on(:Visa)
+            on(:Mastercard)
+          end
+        end
+        resource.sideloads[:credit_card].children.each_value do |child|
+          allow(child).to receive(:future_resolve) do
+            Concurrent::Promises.future { raise "#{child.group_name} failed" }
+          end
+        end
+      end
+
+      it "raises the first child's error, not an aggregate" do
+        expect { render }.to raise_error(RuntimeError, "Visa failed")
+      end
+    end
+
     context "when linking unknown type" do
       before do
-        Graphiti::Resource.autolink = true
+        Graphiti::Resource.relationship_links = true
         params.delete(:include)
         params[:links] = true
         resource.polymorphic_belongs_to :credit_card do
@@ -435,14 +452,14 @@ RSpec.describe "sideloading" do
       end
 
       after do
-        Graphiti::Resource.autolink = false
+        Graphiti::Resource.relationship_links = false
       end
 
       it "does not blow up" do
         render
-        expect(d[0].link(:credit_card, :related)).to be_present
-        expect(d[1].link(:credit_card, :related)).to be_present
-        expect(d[2].link(:credit_card, :related)).to be_nil
+        expect(jsonapi_data[0].link(:credit_card, :related)).to be_present
+        expect(jsonapi_data[1].link(:credit_card, :related)).to be_present
+        expect(jsonapi_data[2].link(:credit_card, :related)).to be_nil
       end
     end
 
@@ -459,7 +476,7 @@ RSpec.describe "sideloading" do
 
       it "does not add excluded relationships" do
         render
-        expect(included.map(&:jsonapi_type)).to contain_exactly("visas")
+        expect(jsonapi_included.map(&:jsonapi_type)).to contain_exactly("visas")
       end
     end
 
@@ -477,7 +494,7 @@ RSpec.describe "sideloading" do
 
       it "only builds specified relationships" do
         render
-        expect(included.map(&:jsonapi_type)).to contain_exactly("visas", "mastercards")
+        expect(jsonapi_included.map(&:jsonapi_type)).to contain_exactly("visas", "mastercards")
       end
     end
 
@@ -515,16 +532,12 @@ RSpec.describe "sideloading" do
         expect(payment_processor(2)).to eq({
           "type" => "paypals", "id" => "1"
         })
-        expect(included[0].jsonapi_type).to eq("visas")
-        expect(included[0].relationships).to eq({
-          "visa_rewards" => {"meta" => {"included" => false}}
-        })
-        expect(included[1].jsonapi_type).to eq("mastercards")
-        expect(included[1].relationships).to eq({
-          "commercials" => {"meta" => {"included" => false}}
-        })
-        expect(included[2].jsonapi_type).to eq("paypals")
-        expect(included[2].relationships).to be_nil
+        expect(jsonapi_included[0].jsonapi_type).to eq("visas")
+        expect(jsonapi_included[0].relationships).to eq({})
+        expect(jsonapi_included[1].jsonapi_type).to eq("mastercards")
+        expect(jsonapi_included[1].relationships).to eq({})
+        expect(jsonapi_included[2].jsonapi_type).to eq("paypals")
+        expect(jsonapi_included[2].relationships).to be_nil
       end
 
       it "works" do
@@ -610,25 +623,62 @@ RSpec.describe "sideloading" do
     end
   end
 
+  describe "the included member" do
+    it "is present, and empty, when the include turns up nothing" do
+      params[:include] = "credit_cards"
+      render
+      expect(json["included"]).to eq([])
+    end
+
+    it "is absent when nothing was included" do
+      render
+      expect(json).to_not have_key("included")
+    end
+  end
+
   context "when the associated resource has default pagination" do
     before do
       resource.class_eval do
         allow_sideload :positions, class: Sideloading::PositionSideload
       end
       resource.class_eval do
-        self.default_page_size = 1
+        self.page_default_size = 1
       end
       params[:include] = "positions"
     end
 
     it "is ignored for sideloads" do
       render
-      expect(included("positions").map(&:id)).to match_array([1, 2])
+      expect(jsonapi_included("positions").map(&:id)).to match_array([1, 2])
     end
   end
 
   context "when nesting sideloads" do
+    # This context adds sideloads to the shared PORO resources rather than to
+    # an anonymous subclass, so snapshot and restore them - otherwise every
+    # later example in the suite inherits the extra relationships.
+    around do |example|
+      shared = [PORO::EmployeeResource, PORO::PositionResource]
+      snapshot = shared.map { |klass|
+        [klass, klass.config[:sideloads].dup,
+          klass.serializer.relationship_blocks.dup]
+      }
+      example.run
+    ensure
+      snapshot.each do |klass, sideloads, blocks|
+        klass.config[:sideloads] = sideloads
+        klass.serializer.relationship_blocks.replace(blocks)
+      end
+    end
+
     before do
+      stub_const(
+        "Graphiti::Scope::GLOBAL_THREAD_POOL_EXECUTOR",
+        Concurrent::Promises.delay do
+          Concurrent::ThreadPoolExecutor.new(min_threads: 1, max_threads: 1, fallback_policy: :caller_runs)
+        end
+      )
+
       PORO::EmployeeResource.class_eval do
         allow_sideload :positions, class: Sideloading::PositionSideload
       end
@@ -647,8 +697,8 @@ RSpec.describe "sideloading" do
 
     it "works" do
       render
-      expect(included("positions").map(&:id)).to match_array([1, 2])
-      expect(included("departments").map(&:id)).to match_array([1, 2])
+      expect(jsonapi_included("positions").map(&:id)).to match_array([1, 2])
+      expect(jsonapi_included("departments").map(&:id)).to match_array([1, 2])
     end
   end
 
@@ -683,7 +733,7 @@ RSpec.describe "sideloading" do
     it "works" do
       params[:page][:positions] = {size: 1}
       render
-      expect(included("positions").map(&:id)).to match_array([2])
+      expect(jsonapi_included("positions").map(&:id)).to match_array([2])
     end
 
     context "with offset" do
@@ -693,7 +743,7 @@ RSpec.describe "sideloading" do
 
       it "works" do
         render
-        expect(included("positions").map(&:id)).to match_array([1])
+        expect(jsonapi_included("positions").map(&:id)).to match_array([1])
       end
     end
 
@@ -705,7 +755,7 @@ RSpec.describe "sideloading" do
 
       it "works" do
         render
-        expect(included("positions").map(&:id)).to match_array([1])
+        expect(jsonapi_included("positions").map(&:id)).to match_array([1])
       end
     end
   end
@@ -733,7 +783,7 @@ RSpec.describe "sideloading" do
 
       it "works" do
         render
-        expect(included("positions").map(&:id)).to match_array([1, 2])
+        expect(jsonapi_included("positions").map(&:id)).to match_array([1, 2])
       end
 
       context "but primary key is nil" do
@@ -769,7 +819,7 @@ RSpec.describe "sideloading" do
 
           it "works" do
             render
-            sl = d[0].sideload(:positions)
+            sl = jsonapi_data[0].sideload(:positions)
             expect(sl.map(&:id)).to eq([position1.id, position2.id])
           end
         end
@@ -814,7 +864,7 @@ RSpec.describe "sideloading" do
 
         it "is respected" do
           render
-          expect(included("positions").map(&:id)).to match_array([2])
+          expect(jsonapi_included("positions").map(&:id)).to match_array([2])
         end
       end
 
@@ -829,7 +879,7 @@ RSpec.describe "sideloading" do
 
         it "is respected" do
           render
-          expect(included("positions").map(&:id)).to match_array([2])
+          expect(jsonapi_included("positions").map(&:id)).to match_array([2])
         end
       end
     end
@@ -859,7 +909,7 @@ RSpec.describe "sideloading" do
 
       it "works" do
         render
-        expect(included("departments").map(&:id)).to match_array([1, 2])
+        expect(jsonapi_included("departments").map(&:id)).to match_array([1, 2])
       end
 
       context "but the foreign key is nil" do
@@ -871,8 +921,8 @@ RSpec.describe "sideloading" do
         it "returns nil without querying" do
           expect(department_resource).to_not receive(:all)
           render
-          expect(d[0].sideload("department")).to be_nil
-          expect(d[1].sideload("department")).to be_nil
+          expect(jsonapi_data[0].sideload("department")).to be_nil
+          expect(jsonapi_data[1].sideload("department")).to be_nil
         end
 
         context "but params customization" do
@@ -897,7 +947,7 @@ RSpec.describe "sideloading" do
 
           it "works" do
             render
-            sl = d[0].sideload(:department)
+            sl = jsonapi_data[0].sideload(:department)
             expect(sl.id).to eq(department.id)
           end
 
@@ -908,7 +958,7 @@ RSpec.describe "sideloading" do
 
             it "works" do
               render
-              sl = d[0].sideload(:department)
+              sl = jsonapi_data[0].sideload(:department)
               expect(sl.id).to eq(department.id)
             end
           end
@@ -926,7 +976,7 @@ RSpec.describe "sideloading" do
 
         it "is respected" do
           render
-          expect(included("departments").map(&:id)).to match_array([2])
+          expect(jsonapi_included("departments").map(&:id)).to match_array([2])
         end
       end
 
@@ -941,7 +991,7 @@ RSpec.describe "sideloading" do
 
         it "is respected" do
           render
-          expect(included("departments").map(&:id)).to match_array([2])
+          expect(jsonapi_included("departments").map(&:id)).to match_array([2])
         end
       end
     end
@@ -969,7 +1019,7 @@ RSpec.describe "sideloading" do
 
       it "works" do
         render
-        expect(included("bios").map(&:id)).to match_array([1])
+        expect(jsonapi_included("bios").map(&:id)).to match_array([1])
       end
 
       context "and params customization" do
@@ -983,7 +1033,7 @@ RSpec.describe "sideloading" do
 
         it "is respected" do
           render
-          expect(included("bios").map(&:id)).to match_array([2])
+          expect(jsonapi_included("bios").map(&:id)).to match_array([2])
         end
       end
 
@@ -998,7 +1048,7 @@ RSpec.describe "sideloading" do
 
         it "is respected" do
           render
-          expect(included("bios").map(&:id)).to match_array([2])
+          expect(jsonapi_included("bios").map(&:id)).to match_array([2])
         end
       end
     end
@@ -1031,6 +1081,18 @@ RSpec.describe "sideloading" do
       end
     end
 
+    # PORO::Position is shared across the whole suite and defines #department
+    # as an attr_accessor. Overriding it here without restoring leaks into
+    # every later example, where it blows up as soon as no departments exist.
+    around do |example|
+      example.run
+    ensure
+      PORO::Position.class_eval do
+        remove_method :department
+        attr_reader :department
+      end
+    end
+
     before do
       PORO::Position.class_eval do
         def department
@@ -1053,9 +1115,18 @@ RSpec.describe "sideloading" do
       expect(pos1.length).to eq(1)
     end
 
+    it "does not assign the same children twice when a resource repeats in the include path" do
+      params[:include] = "positions.department.positions"
+      json = PORO::DepartmentResource.all(params).to_jsonapi
+      rendered = JSON.parse(json)["data"].map { |record|
+        record.dig("relationships", "positions", "data").map { |ref| ref["id"] }
+      }
+      expect(rendered).to all(satisfy { |ids| ids == ids.uniq })
+    end
+
     it "has all correct assocations" do
       render
-      sl = d[0].sideload(:current_position)
+      sl = jsonapi_data[0].sideload(:current_position)
       expect(sl.id).to eq(1)
       expect(sl.jsonapi_type).to eq("positions")
       expect(sl.sideload(:department)).to be_present
@@ -1068,6 +1139,100 @@ RSpec.describe "sideloading" do
       expect {
         render
       }.to_not raise_error
+    end
+
+    context "when a resource-provided association populates only one copy" do
+      around do |example|
+        example.run
+      ensure
+        PORO::Position.class_eval do
+          remove_method :custom_department
+          remove_method :custom_department=
+        end
+      end
+
+      before do
+        PORO::Position.class_eval do
+          attr_accessor :custom_department
+        end
+
+        position_resource.belongs_to :custom_department, resource: department_resource, foreign_key: :department_id do
+          assign_each do |position, _|
+            position.department
+          end
+        end
+
+        params[:include] = "current_position.custom_department,positions"
+      end
+
+      def squashed_position1
+        matches = json["included"].select { |i|
+          i["type"] == "positions" && i["id"] == position1.id.to_s
+        }
+        expect(matches.length).to eq(1)
+        matches.first
+      end
+
+      it "renders complete relationship data on the squashed node" do
+        render
+
+        relationships = squashed_position1["relationships"]
+        expect(relationships).to be_present
+        expect(relationships["custom_department"]).to be_present
+        expect(relationships["custom_department"]["data"]).to be_present
+      end
+
+      context "and concurrency is enabled" do
+        before do
+          allow(Graphiti.config).to receive(:concurrency).and_return(true)
+        end
+
+        it "renders complete relationship data through the promise path" do
+          render
+
+          relationships = squashed_position1["relationships"]
+          expect(relationships["custom_department"]["data"]).to be_present
+        end
+      end
+    end
+
+    it "resolves one instance per row within a resource" do
+      proxy = resource.all(params)
+      employee = proxy.data[0]
+      twin = employee.positions.find { |position| position.id == employee.current_position.id }
+
+      expect(employee.current_position).to equal(twin)
+    end
+
+    it "keeps instances separate across resources serving the same model" do
+      variant = Class.new(position_resource) do
+        def self.name
+          "PORO::SpecialPositionResource"
+        end
+      end
+      resource.sideloads.delete(:current_position)
+      resource.has_one :current_position, resource: variant
+
+      proxy = resource.all(params)
+      employee = proxy.data[0]
+      twin = employee.positions.find { |position| position.id == employee.current_position.id }
+
+      expect(employee.current_position).to_not equal(twin)
+    end
+
+    it "keeps instances separate when the sideload customizes its scope" do
+      resource.sideloads.delete(:current_position)
+      resource.has_one :current_position, resource: position_resource do
+        scope do |employee_ids|
+          {type: :positions, conditions: {employee_id: employee_ids}}
+        end
+      end
+
+      proxy = resource.all(params)
+      employee = proxy.data[0]
+      twin = employee.positions.find { |position| position.id == employee.current_position.id }
+
+      expect(employee.current_position).to_not equal(twin)
     end
 
     describe "across requests" do
@@ -1088,6 +1253,93 @@ RSpec.describe "sideloading" do
 
   context "when a required filter on the sideloaded resource" do
     xit "should maybe raise, not sure yet. that is why this spec is spending" do
+    end
+  end
+
+  # Guards are applied per level - each sideload builds a child Query against
+  # its own resource - so an unreadable relationship nested under a readable
+  # one is never resolved, not merely hidden at render time.
+  context "when a nested relationship is not readable" do
+    let(:position_resource) do
+      Class.new(PORO::PositionResource) do
+        def self.name
+          "PORO::PositionResource"
+        end
+
+        def admin?
+          context&.admin
+        end
+
+        belongs_to :department,
+          resource: PORO::DepartmentResource,
+          readable: :admin?
+      end
+    end
+
+    let(:resource) do
+      nested = position_resource
+      Class.new(PORO::EmployeeResource) do
+        def self.name
+          "PORO::EmployeeResource"
+        end
+        has_many :positions, resource: nested
+      end
+    end
+
+    let!(:department) { PORO::Department.create(name: "dep") }
+    let!(:employee) { PORO::Employee.create(first_name: "John") }
+    let!(:position) do
+      PORO::Position.create title: "t",
+        employee_id: employee.id,
+        department_id: department.id
+    end
+
+    before { params[:include] = "positions.department" }
+
+    def nested_sideloads(admin)
+      Graphiti.with_context(OpenStruct.new(admin: admin)) do
+        resource.all(params).query.sideloads[:positions].sideloads.keys
+      end
+    end
+
+    it "is not resolved" do
+      expect(nested_sideloads(false)).to be_empty
+    end
+
+    context "and the guard passes" do
+      it "is resolved" do
+        expect(nested_sideloads(true)).to eq([:department])
+      end
+    end
+  end
+
+  describe "Graphiti.guarded_relationships" do
+    let!(:guarded_resource) do
+      Class.new(PORO::EmployeeResource) do
+        def self.name
+          "GuardAudit::EmployeeResource"
+        end
+
+        def admin?
+          true
+        end
+
+        has_many :positions, readable: :admin?
+        has_many :teams, writable: -> { admin? }
+        has_many :bios
+      end
+    end
+
+    it "lists relationships with guarded readable/writable flags" do
+      expect(Graphiti.guarded_relationships).to include(
+        "GuardAudit::EmployeeResource.positions",
+        "GuardAudit::EmployeeResource.teams"
+      )
+    end
+
+    it "omits relationships with boolean flags" do
+      expect(Graphiti.guarded_relationships)
+        .to_not include("GuardAudit::EmployeeResource.bios")
     end
   end
 end

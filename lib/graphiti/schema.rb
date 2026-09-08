@@ -3,7 +3,7 @@ module Graphiti
     attr_reader :resources
 
     def self.generate(resources = nil)
-      # TODO: Maybe handle this in graphiti-rails
+      # TODO: Maybe handle this in the Rails integration
       ::Rails.application.eager_load! if defined?(::Rails)
       resources ||= Graphiti.resources.reject(&:abstract_class?)
       resources.reject! { |r| r.name.nil? }
@@ -11,17 +11,20 @@ module Graphiti
       new(resources).generate
     end
 
-    def self.generate!(resources = nil)
-      schema = generate(resources)
+    def self.forced?
+      Types.flag(ENV["FORCE_SCHEMA"])
+    end
 
-      if ENV["FORCE_SCHEMA"] != "true" && File.exist?(Graphiti.config.schema_path)
-        old = JSON.parse(File.read(Graphiti.config.schema_path))
-        errors = Graphiti::SchemaDiff.new(old, schema).compare
-        return errors if errors.any?
-      end
-      FileUtils.mkdir_p(Graphiti.config.schema_path.to_s.gsub("/schema.json", ""))
-      File.write(Graphiti.config.schema_path, JSON.pretty_generate(schema))
+    def self.generate!(resources = nil, path: Graphiti.config.schema_path, force: forced?)
+      result = check(resources, path: path)
+      return result.errors if !force && !result.compatible?
+
+      result.write!
       []
+    end
+
+    def self.check(resources = nil, path: Graphiti.config.schema_path)
+      Check.new(generate(resources), path)
     end
 
     def initialize(resources)
@@ -100,6 +103,10 @@ module Graphiti
           stats: stats(r)
         }
 
+        if r.publishes_public_id?
+          config[:public_id] = r.config[:public_id]&.to_s || true
+        end
+
         if r.grouped_filters.any?
           config[:filter_group] = r.grouped_filters
         end
@@ -111,8 +118,8 @@ module Graphiti
           config[:default_sort] = default_sort
         end
 
-        if r.default_page_size
-          config[:default_page_size] = r.default_page_size
+        if r.page_default_size
+          config[:default_page_size] = r.page_default_size
         end
 
         if r.polymorphic? && !r.polymorphic_child?
@@ -245,6 +252,14 @@ module Graphiti
 
           if config.single?
             schema[:single] = true
+          end
+
+          if config.guarded?
+            schema[:guard] = true
+          end
+
+          if config.render_resource_ids?
+            schema[:linkage] = true
           end
 
           r[name] = schema

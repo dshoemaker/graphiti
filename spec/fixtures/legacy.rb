@@ -2,12 +2,14 @@ ActiveRecord::Schema.define(version: 1) do
   create_table :authors do |t|
     t.boolean :active, default: true
     t.string :first_name
+    t.string :public_id
     t.string :last_name
     t.integer :age
     t.float :float_age
     t.float :decimal_age
     t.string :dwelling_type
     t.integer :state_id
+    t.string :region_code
     t.integer :dwelling_id
     t.integer :organization_id
     t.date :created_at_date
@@ -78,7 +80,15 @@ ActiveRecord::Schema.define(version: 1) do
 
   create_table :states do |t|
     t.string :name
+    t.string :public_id
     t.timestamps
+  end
+
+  # A model whose primary key is neither :id nor an integer, so public_id
+  # has something other than the default to remap around.
+  create_table :legacy_regions, primary_key: :code, id: :string do |t|
+    t.string :name
+    t.string :public_id
   end
 
   create_table :taggings do |t|
@@ -95,6 +105,16 @@ ActiveRecord::Schema.define(version: 1) do
     t.integer :mentor_id
     t.integer :mentee_id
   end
+
+  create_table :sales_shops do |t|
+    t.string :name
+  end
+
+  create_table :sales_stocks do |t|
+    t.integer :book_id
+    t.integer :shop_id
+    t.integer :amount
+  end
 end
 
 module Legacy
@@ -106,9 +126,16 @@ module Legacy
     has_many :books
   end
 
+  class Region < ApplicationRecord
+    # employee_directory.rb owns the plain :regions table in this database.
+    self.table_name = "legacy_regions"
+    self.primary_key = "code"
+  end
+
   class Author < ApplicationRecord
     belongs_to :dwelling, polymorphic: true
     belongs_to :state
+    belongs_to :region, foreign_key: :region_code, primary_key: :code, optional: true
     belongs_to :organization
     has_many :books
     has_many :author_hobbies
@@ -129,11 +156,11 @@ module Legacy
       class_name: "Legacy::State"
 
     has_many :mentor_joins, class_name: "AuthorMentorship",
-                            foreign_key: :mentee_id, inverse_of: :mentee
+      foreign_key: :mentee_id, inverse_of: :mentee
     has_many :mentors, through: :mentor_joins, class_name: "Author", source: :mentor
 
     has_many :mentee_joins, class_name: "AuthorMentorship",
-                            foreign_key: :mentor_id, inverse_of: :mentor
+      foreign_key: :mentor_id, inverse_of: :mentor
     has_many :mentees, through: :mentee_joins, class_name: "Author", source: :mentee
   end
 
@@ -186,6 +213,8 @@ module Legacy
     has_many :tags, through: :taggings
     has_many :readerships
     has_many :readers, through: :readerships, source: :user
+    has_many :sales_stocks, class_name: "Legacy::Sales::Stock"
+    has_many :sales_shops, class_name: "Legacy::Sales::Shop", through: :sales_stocks, source: :shop
   end
 
   class User < ApplicationRecord
@@ -208,6 +237,22 @@ module Legacy
     belongs_to :tag
   end
 
+  module Sales
+    def self.table_name_prefix
+      "sales_"
+    end
+
+    class Stock < ApplicationRecord
+      belongs_to :book
+      belongs_to :shop
+    end
+
+    class Shop < ApplicationRecord
+      has_many :stocks
+      has_many :books, through: :stocks, inverse_of: :sales_shops
+    end
+  end
+
   class LegacyApplicationSerializer < Graphiti::Serializer
   end
 
@@ -225,6 +270,7 @@ module Legacy
   end
 
   class UserResource < ApplicationResource
+    has_many :my_books, resource: "Legacy::BookResource"
   end
 
   class BookResource < ApplicationResource
@@ -242,6 +288,24 @@ module Legacy
     belongs_to :genre
     many_to_many :tags
     many_to_many :readers, resource: Legacy::UserResource
+  end
+
+  module Sales
+    class StockResource < ApplicationResource
+      attribute :amount, :integer
+      belongs_to :book
+      belongs_to :shop
+    end
+
+    class ShopResource < ApplicationResource
+      attribute :name, :string
+      has_many :stocks
+      many_to_many :books, resource: Legacy::BookResource, foreign_key: {sales_stocks: :shop_id}
+    end
+  end
+
+  class RegionResource < ApplicationResource
+    attribute :name, :string
   end
 
   class StateResource < ApplicationResource
@@ -338,7 +402,7 @@ module Legacy
     attribute :created_at_date, :date, only: [:filterable]
     attribute :identifier, :uuid
 
-    filter :last_login, allow_nil: true
+    filter :last_login, blanks: :null
 
     has_many :books
     belongs_to :state

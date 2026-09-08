@@ -55,7 +55,7 @@ RSpec.describe "polymorphic resource behavior" do
       context "when unknown model returned" do
         around do |e|
           original = PORO::CreditCardResource.polymorphic
-          PORO::CreditCardResource.polymorphic = []
+          PORO::CreditCardResource.polymorphic = [PORO::VisaResource]
           begin
             e.run
           ensure
@@ -67,6 +67,24 @@ RSpec.describe "polymorphic resource behavior" do
           expect {
             resource.all.to_a
           }.to raise_error(Graphiti::Errors::PolymorphicResourceChildNotFound)
+        end
+      end
+
+      context "when no subclasses are configured" do
+        around do |e|
+          original = PORO::CreditCardResource.polymorphic
+          PORO::CreditCardResource.polymorphic = []
+          begin
+            e.run
+          ensure
+            PORO::CreditCardResource.polymorphic = original
+          end
+        end
+
+        it "behaves like a non-polymorphic resource" do
+          expect(PORO::CreditCardResource).not_to be_polymorphic
+          expect { resource.all.to_a }.not_to raise_error
+          expect(resource.new.serializer_for(mastercard)).to eq(resource.serializer)
         end
       end
     end
@@ -124,8 +142,7 @@ RSpec.describe "polymorphic resource behavior" do
 
     it "does not render the relationship when it does not pertain" do
       render
-      commercials = json["data"][1]["relationships"]["commercials"]
-      expect(commercials["meta"]["included"]).to eq(false)
+      expect(json["data"][1]["relationships"]).to_not have_key("commercials")
     end
   end
 
@@ -196,7 +213,7 @@ RSpec.describe "polymorphic resource behavior" do
           params[:fields] = {"commercials.actors" => "last_name"}
           json = JSON.parse(proxy.to_json)
           expect(json["data"][0]).to_not have_key("commercials")
-          commercials = (json["data"][1]["commercials"])
+          commercials = json["data"][1]["commercials"]
           expect(commercials[0]["actors"]).to eq([
             {"id" => actor1.id.to_s, "last_name" => "Doe"},
             {"id" => actor2.id.to_s, "last_name" => "DoReMe"}
@@ -210,7 +227,7 @@ RSpec.describe "polymorphic resource behavior" do
             }
           }
           json = JSON.parse(proxy.to_json)
-          commercials = (json["data"][1]["commercials"])
+          commercials = json["data"][1]["commercials"]
           expect(commercials[0]["actors"]).to eq([{
             "id" => actor2.id.to_s,
             "first_name" => "John",
@@ -221,7 +238,7 @@ RSpec.describe "polymorphic resource behavior" do
         it "can sort sideloads off of type-specific ones" do
           params[:sort] = "-on__mastercards--commercials.actors.first_name"
           json = JSON.parse(proxy.to_json)
-          commercials = (json["data"][1]["commercials"])
+          commercials = json["data"][1]["commercials"]
           expect(commercials[0]["actors"]).to eq([
             {
               "id" => actor2.id.to_s,
@@ -245,7 +262,7 @@ RSpec.describe "polymorphic resource behavior" do
             "on__mastercards--commercials.actors.number": 2
           }
           json = JSON.parse(proxy.to_json)
-          commercials = (json["data"][0]["commercials"])
+          commercials = json["data"][0]["commercials"]
           expect(commercials[0]["actors"]).to eq([
             {
               "id" => actor2.id.to_s,

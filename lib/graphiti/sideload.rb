@@ -20,8 +20,9 @@ module Graphiti
     def initialize(name, opts)
       @name = name
       validate_options!(opts)
+      translate_deprecated_options!(opts)
       @parent_resource_class = opts[:parent_resource]
-      @resource_class = opts[:resource]
+      @resource_class_name = opts[:resource]
       @primary_key = opts[:primary_key]
       @foreign_key = opts[:foreign_key]
       @type = opts[:type]
@@ -30,6 +31,9 @@ module Graphiti
       @writable = opts[:writable]
       @as = opts[:as]
       @link = opts[:link]
+      unless @link.nil? || Resource::LINK_MODES.include?(@link)
+        raise Errors::InvalidLinkRendering.new(@parent_resource_class, :"#{name} link", @link)
+      end
       @single = opts[:single]
       @remote = opts[:remote]
       apply_belongs_to_many_filter if type == :many_to_many
@@ -42,7 +46,7 @@ module Graphiti
       @group_name = opts[:group_name]
       @polymorphic_child = opts[:polymorphic_child]
       @parent = opts[:parent]
-      @always_include_resource_ids = opts[:always_include_resource_ids]
+      @render_resource_ids = opts[:resource_ids]
 
       if polymorphic_child?
         parent.resource.polymorphic << resource_class
@@ -55,6 +59,28 @@ module Graphiti
 
     def self.scope(&blk)
       self.scope_proc = blk
+    end
+
+    ASSIGNING_QUERY = :__graphiti_assigning_query
+    private_constant :ASSIGNING_QUERY
+
+    def self.assigning_node(query)
+      return yield if query.nil?
+
+      previous = Fiber[ASSIGNING_QUERY]
+      Fiber[ASSIGNING_QUERY] = query
+      yield
+    ensure
+      Fiber[ASSIGNING_QUERY] = previous unless query.nil?
+    end
+
+    def self.current_assigning_query
+      Fiber[ASSIGNING_QUERY]
+    end
+
+    def self.assigned?(query, record, association_name)
+      owners = query.association_owners[association_name]
+      !owners.nil? && owners.key?(record.object_id)
     end
 
     def self.assign(&blk)
@@ -83,7 +109,8 @@ module Graphiti
         self.adapter = Graphiti::Adapters::GraphitiAPI
         self.model = OpenStruct
         self.remote = remote_url
-        self.validate_endpoints = false
+        self.validate_requests = false
+        self.validate_links = false
       }
       name = "#{parent_resource_class.name}.#{@name}.remote"
       klass.class_eval("def self.name;'#{name}';end", __FILE__, __LINE__)
@@ -99,11 +126,40 @@ module Graphiti
     end
 
     def readable?
-      !!@readable
+      evaluate_flag @readable
     end
 
     def writable?
-      !!@writable
+      evaluate_flag @writable
+    end
+
+    def guarded?
+      dynamic_flag?(@readable) || dynamic_flag?(@writable)
+    end
+
+    def readable_guarded?
+      dynamic_flag?(@readable)
+    end
+
+    def readable_guard_name
+      @readable.to_sym if @readable.is_a?(Symbol) || @readable.is_a?(String)
+    end
+
+    def non_default_options
+      options = {}
+      options[:as] = association_name if @as
+      options[:primary_key] = primary_key unless primary_key == :id
+      options[:single] = true if single?
+      options[:remote] = @remote if remote?
+      options[:link] = @link unless @link.nil?
+      options[:readable] = @readable unless @readable.nil? || @readable == true
+      options[:writable] = @writable unless @writable.nil? || @writable == true
+      options[:resource_ids] = @render_resource_ids unless @render_resource_ids.nil?
+      options
+    end
+
+    def customized_base_scope?
+      !!@base_scope
     end
 
     def single?
@@ -118,18 +174,62 @@ module Graphiti
       !!@polymorphic_as
     end
 
-    def always_include_resource_ids?
-      !!@always_include_resource_ids
+    # Every check behind the blocker is static sideload configuration, and this
+    # is asked once per rendered record per relationship.
+    def resource_ids_from_foreign_key?
+      return @resource_ids_from_foreign_key unless @resource_ids_from_foreign_key.nil?
+
+      @resource_ids_from_foreign_key = resource_ids_blocker.nil?
+    end
+
+    def resource_ids_blocker
+      :no_foreign_key_on_parent
+    end
+
+    def render_resource_ids?
+      return !!@render_resource_ids unless @render_resource_ids.nil?
+
+      default_render_resource_ids?
+    end
+
+    def default_render_resource_ids?
+      false
+    end
+
+    # A custom link block means the author wants the link, so a false default does not silence it.
+    def link_mode
+      mode = requested_link_mode
+      return false unless mode
+      return false unless link_proc || link_hides_primary_key?
+
+      mode
+    end
+
+    def requested_link_mode
+      @link.nil? ? default_link_mode : @link
+    end
+
+    def default_link_mode
+      default = @parent_resource_class.relationship_links
+      (link_proc && default == false) ? true : default
     end
 
     def link?
-      return true if link_proc
+      link_mode != false
+    end
 
-      if @link.nil?
-        !!@parent_resource_class.autolink
-      else
-        !!@link
-      end
+    def link_hides_primary_key?
+      true
+    end
+
+    def collect_foreign_keys(parents, query)
+    end
+
+    def register_public_id_source
+    end
+
+    def rendered_id_for(foreign_key, query)
+      foreign_key
     end
 
     def link_filter(parents)
@@ -177,7 +277,8 @@ module Graphiti
     end
 
     def resource_class
-      @resource_class ||= infer_resource_class
+      @resource_class ||= (@resource_class_name.is_a?(String) ? @resource_class_name.constantize : @resource_class_name) ||
+        infer_resource_class
     end
 
     def scope(parents)
@@ -234,8 +335,18 @@ module Graphiti
       proxy
     end
 
-    def load(parents, query, graph_parent)
-      build_resource_proxy(parents, query, graph_parent).to_a
+    def load(parents, query, graph_parent, &proxy_block)
+      if Scope.resolve_synchronously?
+        sync_load(parents, query, graph_parent, &proxy_block)
+      else
+        future_load(parents, query, graph_parent, &proxy_block).value!
+      end
+    end
+
+    def sync_load(parents, query, graph_parent, &proxy_block)
+      proxy = build_resource_proxy(parents, query, graph_parent)
+      proxy_block&.call(proxy)
+      proxy.to_a
     end
 
     # Override in subclass
@@ -285,25 +396,38 @@ module Graphiti
       children.replace(associated) if track_associated
     end
 
-    def resolve(parents, query, graph_parent)
-      if single? && parents.length > 1
-        raise Errors::SingularSideload.new(self, parents.length)
+    def resolve(parents, query, graph_parent, &proxy_block)
+      if Scope.resolve_synchronously?
+        sync_resolve(parents, query, graph_parent, &proxy_block)
+      else
+        future_resolve(parents, query, graph_parent, &proxy_block).value!
       end
+    end
+
+    # Called by a scope that already decided to stay inline, so it must not consult the pool again.
+    # A scope_proc builds a Scope rather than a proxy, and that nested scope decides for itself.
+    def sync_resolve(parents, query, graph_parent, &proxy_block)
+      assert_singular!(parents)
 
       if self.class.scope_proc
-        sideload_scope = fire_scope(parents)
-        sideload_scope = Scope.new sideload_scope,
-          resource,
-          query,
-          parent: graph_parent,
-          sideload: self,
-          sideload_parent_length: parents.length,
-          default_paginate: false
-        sideload_scope.resolve do |sideload_results|
-          fire_assign(parents, sideload_results)
+        build_sideload_scope(parents, query, graph_parent).resolve do |sideload_results|
+          fire_assign(parents, sideload_results, query)
         end
       else
-        load(parents, query, graph_parent)
+        sync_load(parents, query, graph_parent, &proxy_block)
+      end
+    end
+
+    # A scope_proc builds a Scope rather than a proxy, and a Scope's cache key omits what a proxy's carries.
+    def future_resolve(parents, query, graph_parent, &proxy_block)
+      assert_singular!(parents)
+
+      if self.class.scope_proc
+        build_sideload_scope(parents, query, graph_parent).future_resolve do |sideload_results|
+          fire_assign(parents, sideload_results, query)
+        end
+      else
+        future_load(parents, query, graph_parent, &proxy_block)
       end
     end
 
@@ -335,10 +459,14 @@ module Graphiti
     end
 
     def associate_all(parent, children)
+      return unless claim_association(parent)
+
       parent_resource.associate_all(parent, children, association_name, type)
     end
 
     def associate(parent, child)
+      return unless claim_association(parent)
+
       parent_resource.associate(parent, child, association_name, type)
     end
 
@@ -367,6 +495,28 @@ module Graphiti
 
     private
 
+    def assert_singular!(parents)
+      if single? && parents.length > 1
+        raise Errors::SingularSideload.new(self, parents.length)
+      end
+    end
+
+    def build_sideload_scope(parents, query, graph_parent)
+      Scope.new fire_scope(parents),
+        resource,
+        query,
+        parent: graph_parent,
+        sideload: self,
+        sideload_parent_length: parents.length,
+        default_paginate: false
+    end
+
+    def future_load(parents, query, graph_parent, &proxy_block)
+      proxy = build_resource_proxy(parents, query, graph_parent)
+      proxy_block&.call(proxy)
+      proxy.respond_to?(:future_resolve_data) ? proxy.future_resolve_data : Concurrent::Promises.fulfilled_future(proxy)
+    end
+
     def blank_query?(params)
       if (filter = params[:filter])
         if filter.values == [""]
@@ -374,6 +524,18 @@ module Graphiti
         end
       end
       false
+    end
+
+    def translate_deprecated_options!(opts)
+      return unless opts.key?(:always_include_resource_ids)
+
+      Graphiti::DEPRECATOR.deprecation_warning(
+        :always_include_resource_ids,
+        "Use :resource_ids instead (#{opts[:parent_resource]&.name}##{@name})"
+      )
+
+      value = opts.delete(:always_include_resource_ids)
+      opts[:resource_ids] = value unless opts.key?(:resource_ids)
     end
 
     def validate_options!(opts)
@@ -394,7 +556,7 @@ module Graphiti
         opts[:sideload_parent_length] = parents.length
         opts[:query] = query
         opts[:after_resolve] = ->(results) {
-          fire_assign(parents, results)
+          fire_assign(parents, results, query)
         }
       end
     end
@@ -407,14 +569,26 @@ module Graphiti
       end
     end
 
-    def fire_assign(parents, children)
-      with_error_handling Errors::SideloadAssignError do
-        if self.class.assign_proc
-          instance_exec(parents, children, &self.class.assign_proc)
-        else
-          assign(parents, children)
+    def fire_assign(parents, children, query = nil)
+      self.class.assigning_node(query) do
+        with_error_handling Errors::SideloadAssignError do
+          if self.class.assign_proc
+            instance_exec(parents, children, &self.class.assign_proc)
+          else
+            assign(parents, children)
+          end
         end
       end
+    end
+
+    # A record can be shared by two nodes of the include tree, and a node that narrows
+    # differently returns different rows, so the first node to populate an association owns it.
+    def claim_association(parent)
+      query = self.class.current_assigning_query
+      return true if query.nil?
+
+      owners = query.association_owners.compute_if_absent(association_name) { Concurrent::Map.new }
+      owners.compute_if_absent(parent.object_id) { query.hash } == query.hash
     end
 
     def with_error_handling(error_class)
@@ -448,18 +622,48 @@ module Graphiti
       Util::Class.namespace_for(klass)
     end
 
-    # TODO: call this at runtime to support procs
+    def dynamic_flag?(flag)
+      flag.is_a?(Symbol) || flag.is_a?(String) || flag.is_a?(Proc)
+    end
+
+    # The guard method may be defined on either resource. The declaring side
+    # wins (`has_many :positions, readable: :admin?` calls EmployeeResource#admin?,
+    # matching how attribute guards resolve). If the related resource is the only place
+    # that defines it, the guard runs there. For instance, PositionResource#admin? can guard
+    # every relationship that points at positions.
+
     def evaluate_flag(flag)
       return false if flag.blank?
 
-      case flag.class.name
-      when "Symbol", "String"
-        resource.send(flag)
-      when "Proc"
-        resource.instance_exec(&flag)
+      case flag
+      when Symbol, String
+        guard_resource(flag).send(flag)
+      when Proc
+        evaluate_guard_proc(flag)
       else
         !!flag
       end
+    end
+
+    # Private methods are eligible - guards are often not part of a
+    # resource's public API.
+    def guard_resource(method_name)
+      if !parent_resource.respond_to?(method_name, true) &&
+          resource.respond_to?(method_name, true)
+        resource
+      else
+        parent_resource
+      end
+    end
+
+    # A proc can't be introspected the way a method name can, so run it
+    # against the declaring resource and only reach for the related one if
+    # that resource turns out not to define what the proc references.
+    def evaluate_guard_proc(flag)
+      parent_resource.instance_exec(&flag)
+    rescue NameError => error
+      raise error unless resource.respond_to?(error.name, true)
+      resource.instance_exec(&flag)
     end
 
     def context

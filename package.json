@@ -1,6 +1,7 @@
 {
   "name": "graphiti",
-  "version": "1.4.0",
+  "private": true,
+  "version": "0.0.0-development",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/graphiti-api/graphiti.git"
@@ -15,13 +16,15 @@
   },
   "devDependencies": {
     "semantic-release-rubygem": "^1.2.0",
-    "semantic-release": "^19.0.3",
-    "@semantic-release/changelog": "^6.0.1",
-    "@semantic-release/git": "^10.0.1" 
+    "semantic-release": "^25.0.8",
+    "@semantic-release/changelog": "^7.0.0",
+    "@semantic-release/git": "^11.0.1",
+    "@semantic-release/exec": "^7.1.0"
   },
   "release": {
     "branches": [
-      "master",
+      "1.x",
+      "main",
       {
         "name": "beta",
         "prerelease": true
@@ -37,43 +40,66 @@
         {
           "releaseRules": [
             {
-              "type": "*!",
+              "breakingMarker": "!",
               "release": "major"
+            },
+            {
+              "breaking": true,
+              "release": "major"
+            },
+            {
+              "revert": true,
+              "release": "patch"
             },
             {
               "type": "feat",
               "release": "minor"
             },
             {
-              "type": "build",
+              "type": "fix",
               "release": "patch"
+            },
+            {
+              "type": "perf",
+              "release": "patch"
+            },
+            {
+              "type": "build",
+              "release": false
             },
             {
               "type": "ci",
-              "release": "patch"
+              "release": false
             },
             {
               "type": "chore",
-              "release": "patch"
+              "release": false
             },
             {
               "type": "docs",
-              "release": "patch"
+              "release": false
             },
             {
               "type": "refactor",
-              "release": "patch"
+              "release": false
             },
             {
               "type": "style",
-              "release": "patch"
+              "release": false
             },
             {
               "type": "test",
-              "release": "patch"
+              "release": false
             }
           ],
           "parserOpts": {
+            "headerPattern": "^(\\w*)(?:\\((.*)\\))?(!)?: (.*)$",
+            "headerCorrespondence": [
+              "type",
+              "scope",
+              "breakingMarker",
+              "subject"
+            ],
             "noteKeywords": [
               "BREAKING CHANGE",
               "BREAKING CHANGES",
@@ -85,7 +111,20 @@
           }
         }
       ],
-      "@semantic-release/release-notes-generator",
+      [
+        "@semantic-release/release-notes-generator",
+        {
+          "parserOpts": {
+            "headerPattern": "^(\\w*)(?:\\((.*)\\))?(!)?: (.*)$",
+            "headerCorrespondence": [
+              "type",
+              "scope",
+              "breakingMarker",
+              "subject"
+            ]
+          }
+        }
+      ],
       [
         "@semantic-release/changelog",
         {
@@ -94,12 +133,25 @@
         }
       ],
       "semantic-release-rubygem",
-      "@semantic-release/github",
+      [
+        "@semantic-release/github",
+        {
+          "successCommentCondition": "<% return !branch.prerelease; %>"
+        }
+      ],
+      [
+        "@semantic-release/exec",
+        {
+          "prepareCmd": "bundle exec ruby spec/performance/measure_releases.rb --promote v${nextRelease.version}"
+        }
+      ],
       [
         "@semantic-release/git",
         {
           "assets": [
-            "CHANGELOG.md"
+            "CHANGELOG.md",
+            "lib/graphiti/version.rb",
+            "spec/performance/performance_history.tsv"
           ],
           "message": "${nextRelease.version} CHANGELOG [skip ci]\n\n${nextRelease.notes}"
         }

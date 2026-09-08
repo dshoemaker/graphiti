@@ -37,8 +37,8 @@ module Graphiti
       end
     end
 
-    def with_context(object, namespace = nil)
-      Graphiti.with_context(object, namespace) do
+    def with_context(object, action = nil)
+      Graphiti.with_context(object, action) do
         yield
       end
     end
@@ -51,8 +51,20 @@ module Graphiti
       self.class.context
     end
 
+    # Rails sets this from action_name, so it is whatever the controller action
+    # is called, not a fixed list. Persistence overrides it with :create/:update
+    # while saving, and :show while resolving sideloads afterwards.
+    def self.current_action
+      Graphiti.context[:action]
+    end
+
+    def current_action
+      self.class.current_action
+    end
+
     def self.context_namespace
-      Graphiti.context[:namespace]
+      Graphiti::DEPRECATOR.deprecation_warning(:context_namespace, "Use #current_action instead")
+      current_action
     end
 
     def context_namespace
@@ -65,6 +77,32 @@ module Graphiti
 
     def base_scope
       adapter.base_scope(model)
+    end
+
+    # Exposes write context to attribute guards for the duration of the block.
+    # @api private
+    def with_guarded_write(action, id)
+      @guarded_write = {action: action, id: id}
+      yield
+    ensure
+      remove_instance_variable(:@guarded_write) if defined?(@guarded_write)
+      remove_instance_variable(:@guard_model) if defined?(@guard_model)
+    end
+
+    # The model a writable guard is being asked about. Resolved lazily and
+    # memoized, so it costs nothing unless a guard asks for it, and is only
+    # resolved once per payload. On create, this is a new unsaved instance.
+    # @api private
+    def guard_model
+      return @guard_model if defined?(@guard_model)
+
+      @guard_model = if !defined?(@guarded_write)
+        nil
+      elsif @guarded_write[:action] == :create || @guarded_write[:id].nil?
+        build(model)
+      else
+        self.class._find(id: @guarded_write[:id]).data
+      end
     end
 
     def typecast(name, value, flag)
@@ -97,10 +135,23 @@ module Graphiti
       adapter.disassociate(parent, child, association_name, type)
     end
 
-    def persist_with_relationships(meta, attributes, relationships, caller_model = nil, foreign_key = nil)
-      persistence = Graphiti::Util::Persistence \
-        .new(self, meta, attributes, relationships, caller_model, foreign_key)
+    # TODO: make foreign_key a keyword once the satellite gems are rolled in - they call these positionally
+    def assign_with_relationships(meta, attributes, relationships, caller_model = nil, foreign_key = nil, model_instance: nil)
+      persistence = Graphiti::Util::Persistence
+        .new(self, meta, attributes, relationships, caller_model, foreign_key,
+          assigned_model: model_instance)
+      persistence.assign
+    end
+
+    def persist_with_relationships(meta, attributes, relationships, caller_model = nil, foreign_key = nil, assigned_model: nil)
+      persistence = Graphiti::Util::Persistence
+        .new(self, meta, attributes, relationships, caller_model, foreign_key,
+          assigned_model: assigned_model)
       persistence.run
+    end
+
+    def model_attribute_for(name)
+      self.class.model_attribute_for(name)
     end
 
     def stat(attribute, calculation)

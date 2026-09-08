@@ -4,11 +4,22 @@
 module Graphiti
   class Debugger
     class << self
-      attr_accessor :enabled, :chunks, :debug_models, :preserve, :pry
+      attr_accessor :enabled, :debug_models, :preserve, :pry
     end
-    self.chunks = []
+
+    CHUNKS = :__graphiti_debugger_chunks
+    private_constant :CHUNKS
 
     class << self
+      # Pool threads inherit this through the fiber storage copy Scope#future_with_context makes, so their chunks reach the right request.
+      def chunks
+        Fiber[CHUNKS] ||= Concurrent::Array.new
+      end
+
+      def chunks=(value)
+        Fiber[CHUNKS] = value
+      end
+
       def on_data(name, start, stop, id, payload)
         return [] unless enabled
 
@@ -52,12 +63,14 @@ module Graphiti
       end
 
       private def results(raw_results)
-        raw_results.map { |r| "[#{r.class.name}, #{r.id.inspect}]" }.join(", ")
+        raw_results.map { |r|
+          identifier = r.respond_to?(:id) ? r.id.inspect : "no id"
+          "[#{r.class.name}, #{identifier}]"
+        }.join(", ")
       end
 
       private def on_sideload_data(payload, params, took)
         sideload = payload[:sideload]
-        results = results(payload[:results])
         add_chunk(payload[:resource], payload[:parent]) do |logs, json|
           logs << [" \\_ #{sideload.name}", :yellow, true]
           json[:name] = sideload.name
@@ -68,14 +81,13 @@ module Graphiti
           end
           logs << ["    #{query}", :cyan, true]
           json[:query] = query
-          logs << ["    Returned Models: #{results}"] if debug_models
+          logs << ["    Returned Models: #{results(payload[:results])}"] if debug_models
           logs << ["    Took: #{took}ms", :magenta, true]
           json[:took] = took
         end
       end
 
       private def on_primary_data(payload, params, took)
-        results = results(payload[:results])
         add_chunk(payload[:resource], payload[:parent]) do |logs, json|
           logs << [""]
           logs << ["=== Graphiti Debug", :green, true]
@@ -85,7 +97,7 @@ module Graphiti
           query = "#{payload[:resource].class.name}.#{payload[:action]}(#{params.inspect})"
           logs << [query, :cyan, true]
           json[:query] = query
-          logs << ["Returned Models: #{results}"] if debug_models
+          logs << ["Returned Models: #{results(payload[:results])}"] if debug_models
           logs << ["Took: #{took}ms", :magenta, true]
           json[:took] = took
         end
@@ -179,14 +191,15 @@ module Graphiti
       end
 
       def graph_statements
-        @chunks.each do |chunk|
+        statements = chunks
+        statements.each do |chunk|
           if (parent = chunk[:parent])
-            relevant = chunks.find { |c| c[:resource] == parent }
+            relevant = statements.find { |c| c[:resource] == parent }
             relevant[:children].unshift(chunk) if relevant
           end
         end
-        @chunks.reject! { |c| !!c[:parent] }
-        @chunks
+        statements.reject! { |c| !!c[:parent] }
+        statements
       end
 
       def chunk_to_hash(chunk)

@@ -7,9 +7,20 @@
 /spec/reports/
 /gemfiles/*.lock
 /tmp/
+# railties generates local_secret.txt under the dummy app root, which is spec/
+/spec/tmp/
 node_modules
 .byebug_history
 spec/.rspec-examples
 spec/dummy/log/*
 *~
 .vscode/
+
+# Docusaurus
+website/build/
+website/.docusaurus/
+
+.DS_Store
+.idea/
+examples/*/Gemfile.lock
+examples/sinatra/*.sqlite3*

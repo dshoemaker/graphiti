@@ -8,9 +8,16 @@ module Graphiti
       def endpoint
         if (endpoint = super)
           endpoint
-        else
+        elsif !@__skip_inference
           self.endpoint = infer_endpoint
         end
+      end
+
+      def endpoint=(value)
+        # changes introduced in Ruby 3.2 and above require some extra hoops
+        # to allow .endpoint = nil to work properly
+        @__skip_inference = value.blank?
+        super
       end
     end
 
@@ -18,12 +25,8 @@ module Graphiti
       class_attribute :endpoint,
         :base_url,
         :endpoint_namespace,
-        :secondary_endpoints,
-        :autolink,
-        :validate_endpoints
+        :secondary_endpoints
       self.secondary_endpoints = []
-      self.autolink = true
-      self.validate_endpoints = true
 
       class << self
         prepend Overrides
@@ -31,10 +34,40 @@ module Graphiti
     end
 
     class_methods do
+      # Deprecated. Folded into relationship_links. Remove in 3.0.
+      def autolink
+        relationship_links != false
+      end
+
+      # true cannot express :on_demand, so it leaves an inherited on-demand mode alone.
+      def autolink=(val)
+        return if val && relationship_links == :on_demand
+
+        self.relationship_links = val ? true : false
+      end
+
+      def autolink?
+        autolink
+      end
+
+      # Deprecated. Split into validate_requests and validate_links. Remove in 3.0.
+      def validate_endpoints
+        validate_requests && validate_links
+      end
+
+      def validate_endpoints=(val)
+        self.validate_requests = val
+        self.validate_links = val
+      end
+
+      def validate_endpoints?
+        validate_endpoints
+      end
+
       def infer_endpoint
         return unless name
 
-        path = "/#{name.gsub("Resource", "").pluralize.underscore}".to_sym
+        path = :"/#{name.gsub("Resource", "").pluralize.underscore}"
         {
           path: path,
           full_path: full_path_for(path),
@@ -74,12 +107,12 @@ module Graphiti
         endpoints.any? do |e|
           has_id = params[:id] || params[:data].try(:[], :id)
           path = request_path
-          if [:update, :show, :destroy].include?(context_namespace) && has_id
+          if [:update, :show, :destroy].include?(action) && has_id
             path = request_path.split("/")
-            path.pop if path.last == has_id.to_s
+            path.pop if Graphiti::Util::UriDecoder.decode_uri(path.last) == has_id.to_s
             path = path.join("/")
           end
-          e[:full_path].to_s == path && e[:actions].include?(context_namespace)
+          e[:full_path].to_s == path && e[:actions].include?(action)
         end
       end
 
@@ -94,4 +127,12 @@ module Graphiti
       end
     end
   end
+
+  msg = "Use `self.relationship_links` (true, false, or :on_demand)"
+  endpoints_msg = "Use `self.validate_requests` for inbound requests, `self.validate_links` for rendered links"
+  DEPRECATOR.deprecate_methods(Links::ClassMethods,
+    autolink: msg, "autolink=": msg, autolink?: msg,
+    validate_endpoints: endpoints_msg,
+    "validate_endpoints=": endpoints_msg,
+    validate_endpoints?: endpoints_msg)
 end

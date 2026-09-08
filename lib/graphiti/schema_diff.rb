@@ -46,6 +46,11 @@ module Graphiti
       if old_resource[:type] != new_resource[:type]
         @errors << "#{old_resource[:name]} changed type from #{old_resource[:type].inspect} to #{new_resource[:type].inspect}."
       end
+
+      # Every id a client holds, and every url built from one, stops resolving.
+      if old_resource[:public_id] != new_resource[:public_id]
+        @errors << "#{old_resource[:name]} changed public_id from #{old_resource[:public_id].inspect} to #{new_resource[:public_id].inspect}."
+      end
       yield
     end
 
@@ -100,6 +105,14 @@ module Graphiti
         if new_rel[:single] && !old_rel[:single]
           @errors << "#{old_resource[:name]}: relationship #{name.inspect} became single: true."
           next
+        end
+
+        if new_rel[:guard] && !old_rel[:guard]
+          @errors << "#{old_resource[:name]}: relationship #{name.inspect} became guarded."
+        end
+
+        if old_rel[:linkage] && !new_rel[:linkage]
+          @errors << "#{old_resource[:name]}: relationship #{name.inspect} no longer includes resource linkage."
         end
 
         if new_rel[:resource] != old_rel[:resource]

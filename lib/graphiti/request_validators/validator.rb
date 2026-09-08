@@ -11,13 +11,15 @@ module Graphiti
       end
 
       def validate
+        validate_page
+
         # Right now, all requests - even reads - go through the validator
         # In the future these should have their own validation logic, but
         # for now we can just bypass
-        return true unless @params.has_key?(:data)
+        return errors.blank? unless @params.has_key?(:data)
+        return false unless validate_data_shape
 
         resource = @root_resource
-
         if @params[:data].has_key?(:type)
           if (meta_type = deserialized_payload.meta[:type].try(:to_sym))
             if @root_resource.type != meta_type && @root_resource.polymorphic?
@@ -48,7 +50,29 @@ module Graphiti
 
       private
 
+      def validate_page
+        page = @params[:page]
+        return if page.nil? || page.respond_to?(:each_pair)
+
+        @errors.add(:page, :invalid)
+      end
+
+      def validate_data_shape
+        data = @params[:data]
+        return true if data.nil? || data.respond_to?(:each_pair)
+
+        @errors.add(:data, :invalid)
+        false
+      end
+
       def process_relationships(resource, relationships, payload_path)
+        relationships.each_key do |name|
+          unless resource.class.sideload(name.to_sym)
+            full_key = fully_qualified_key(name, payload_path, :relationships)
+            @errors.add(full_key, :invalid_relationship)
+          end
+        end
+
         opts = {
           resource: resource,
           relationships: relationships
@@ -76,22 +100,33 @@ module Graphiti
       end
 
       def typecast_attributes(resource, attributes, action, payload_path)
-        attributes.each_pair do |key, value|
-          # Only validate id if create action, otherwise it's only used for lookup
-          next if action != :create &&
-            key == :id &&
-            resource.class.config[:attributes][:id][:writable] == false
+        resource.with_guarded_write(action, attributes[:id]) do
+          attributes.each_pair do |key, value|
+            # Only validate id if create action, otherwise it's only used for lookup
+            next if action != :create &&
+              key == :id &&
+              resource.class.config[:attributes][:id][:writable] == false
 
-          begin
-            attributes[key] = resource.typecast(key, value, :writable)
-          rescue Graphiti::Errors::UnknownAttribute
-            @errors.add(fully_qualified_key(key, payload_path), :unknown_attribute, message: "is an unknown attribute")
-          rescue Graphiti::Errors::InvalidAttributeAccess
-            @errors.add(fully_qualified_key(key, payload_path), :unwritable_attribute, message: "cannot be written")
-          rescue Graphiti::Errors::TypecastFailed => e
-            @errors.add(fully_qualified_key(key, payload_path), :type_error, message: "should be type #{e.type_name}")
+            begin
+              attributes[key] = typecast_attribute(resource, key, value)
+            rescue Graphiti::Errors::UnknownAttribute
+              @errors.add(fully_qualified_key(key, payload_path), :unknown_attribute)
+            rescue Graphiti::Errors::InvalidAttributeAccess
+              @errors.add(fully_qualified_key(key, payload_path), :unwritable_attribute)
+            rescue Graphiti::Errors::TypecastFailed => e
+              @errors.add(fully_qualified_key(key, payload_path), :type_error, type: e.type_name)
+            end
           end
         end
+      end
+
+      # A writable foreign key arrives as the public id of the record it names, and is decoded when assigned.
+      def typecast_attribute(resource, key, value)
+        source = (key == :id) ? nil : resource.class.public_id_source_for(key)
+        return resource.typecast(key, value, :writable) unless source
+
+        resource.get_attr!(key, :writable, request: true)
+        source.new.typecast(:id, value, :filterable)
       end
 
       def normalized_params(raw_params)

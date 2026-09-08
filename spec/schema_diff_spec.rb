@@ -324,6 +324,60 @@ RSpec.describe Graphiti::SchemaDiff do
       end
     end
 
+    context "when a resource gains an public_id" do
+      before do
+        resource_b.attribute :public_id, :string
+        resource_b.public_id :public_id
+      end
+
+      it "returns error" do
+        expect(diff).to include(
+          'SchemaDiff::EmployeeResource changed public_id from nil to "public_id".'
+        )
+      end
+    end
+
+    context "when a resource changes which attribute it publishes as the id" do
+      before do
+        resource_a.attribute :public_id, :string
+        resource_a.public_id :public_id
+        resource_b.attribute :slug, :string
+        resource_b.public_id :slug
+      end
+
+      it "returns error" do
+        expect(diff).to include(
+          'SchemaDiff::EmployeeResource changed public_id from "public_id" to "slug".'
+        )
+      end
+    end
+
+    context "when a resource moves from a public id column to an encoded one" do
+      before do
+        resource_a.attribute :public_id, :string
+        resource_a.public_id :public_id
+        resource_b.public_id do
+          encode { |primary_key| primary_key.to_s }
+          decode { |public_id| public_id.to_i }
+        end
+      end
+
+      it "returns error" do
+        expect(diff).to include(
+          'SchemaDiff::EmployeeResource changed public_id from "public_id" to true.'
+        )
+      end
+    end
+
+    context "when a resource keeps the same public_id" do
+      before do
+        resource_a.attribute :public_id, :string
+        resource_a.public_id :public_id
+      end
+
+      it { is_expected.to eq([]) }
+    end
+
     context "when extra attribute added" do
       before do
         resource_b.extra_attribute :foo, :string
@@ -490,15 +544,21 @@ RSpec.describe Graphiti::SchemaDiff do
       end
 
       it "returns error" do
-        expect(diff).to eq([
-          'SchemaDiff::EmployeeResource: default sort changed from [{:foo=>"asc"}] to [{:foo=>"desc"}].'
-        ])
+        if RUBY_VERSION >= "3.4"
+          expect(diff).to eq([
+            'SchemaDiff::EmployeeResource: default sort changed from [{foo: "asc"}] to [{foo: "desc"}].'
+          ])
+        else
+          expect(diff).to eq([
+            'SchemaDiff::EmployeeResource: default sort changed from [{:foo=>"asc"}] to [{:foo=>"desc"}].'
+          ])
+        end
       end
     end
 
     context "when default page size is added" do
       before do
-        resource_b.default_page_size = 10
+        resource_b.page_default_size = 10
       end
 
       it "returns error" do
@@ -510,8 +570,8 @@ RSpec.describe Graphiti::SchemaDiff do
 
     context "when default page size is removed" do
       before do
-        resource_a.default_page_size = 30
-        resource_b.default_page_size = nil
+        resource_a.page_default_size = 30
+        resource_b.page_default_size = nil
       end
 
       it "returns error" do
@@ -523,8 +583,8 @@ RSpec.describe Graphiti::SchemaDiff do
 
     context "when default page size changes" do
       before do
-        resource_a.default_page_size = 30
-        resource_b.default_page_size = 10
+        resource_a.page_default_size = 30
+        resource_b.page_default_size = 10
       end
 
       it "returns error" do
@@ -995,6 +1055,62 @@ RSpec.describe Graphiti::SchemaDiff do
       it { is_expected.to eq([]) }
     end
 
+    context "when relationship becomes guarded" do
+      before do
+        resource_a.has_many :positions,
+          resource: position_resource
+        resource_b.has_many :positions,
+          readable: :admin?,
+          resource: position_resource
+      end
+
+      it "returns error" do
+        expect(diff).to eq([
+          "SchemaDiff::EmployeeResource: relationship :positions became guarded."
+        ])
+      end
+    end
+
+    context "when relationship removes a guard" do
+      before do
+        resource_a.has_many :positions,
+          readable: :admin?,
+          resource: position_resource
+        resource_b.has_many :positions,
+          resource: position_resource
+      end
+
+      it { is_expected.to eq([]) }
+    end
+
+    context "when relationship stops including resource linkage" do
+      before do
+        resource_a.has_many :positions,
+          resource_ids: true,
+          resource: position_resource
+        resource_b.has_many :positions,
+          resource: position_resource
+      end
+
+      it "returns error" do
+        expect(diff).to eq([
+          "SchemaDiff::EmployeeResource: relationship :positions no longer includes resource linkage."
+        ])
+      end
+    end
+
+    context "when relationship starts including resource linkage" do
+      before do
+        resource_a.has_many :positions,
+          resource: position_resource
+        resource_b.has_many :positions,
+          resource_ids: true,
+          resource: position_resource
+      end
+
+      it { is_expected.to eq([]) }
+    end
+
     context "when relationship changes resource" do
       let(:position_resource2) do
         Class.new(application_resource) do
@@ -1204,9 +1320,15 @@ RSpec.describe Graphiti::SchemaDiff do
         end
 
         it "returns error" do
-          expect(diff).to eq([
-            'Endpoint "/schema_diff/employees" had incompatible sideload allowlist. Was [{:positions=>"department"}, "same"], now ["positions", "same"].'
-          ])
+          if RUBY_VERSION >= "3.4"
+            expect(diff).to eq([
+              'Endpoint "/schema_diff/employees" had incompatible sideload allowlist. Was [{positions: "department"}, "same"], now ["positions", "same"].'
+            ])
+          else
+            expect(diff).to eq([
+              'Endpoint "/schema_diff/employees" had incompatible sideload allowlist. Was [{:positions=>"department"}, "same"], now ["positions", "same"].'
+            ])
+          end
         end
       end
     end

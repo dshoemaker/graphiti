@@ -3,11 +3,12 @@ $LOAD_PATH.unshift File.expand_path("../../lib", __FILE__)
 Dir[File.dirname(__FILE__) + "/support/**/*.rb"].sort.each { |f| require f }
 require "pry"
 
+require "logger"
 require "active_model"
-require "graphiti_spec_helpers/rspec"
+require "graphiti/spec_helpers/rspec"
 require "graphiti"
 # Avoiding loading classes before we're ready
-Graphiti::Resource.autolink = false
+Graphiti::Resource.relationship_links = false
 require "fixtures/poro"
 Graphiti.setup!
 
@@ -16,8 +17,7 @@ require "faraday"
 require "base64"
 
 RSpec.configure do |config|
-  config.include GraphitiSpecHelpers::RSpec
-  config.include GraphitiSpecHelpers::Sugar
+  config.include Graphiti::SpecHelpers::RSpec
 
   config.after do
     PORO::DB.clear
@@ -34,6 +34,24 @@ RSpec.configure do |config|
     end
   end
 
+  # Every anonymous Class.new(SomeResource) registers itself in the global
+  # Graphiti.resources via the inherited hook, and nothing ever removes it.
+  # Graphiti.setup! walks that list and re-applies sideloads, so without this
+  # an example calling setup! reaches back into every throwaway resource
+  # earlier examples defined - which makes results depend on spec order.
+  config.around do |example|
+    registered = Graphiti.resources.dup
+    public_id_sources = Graphiti.public_id_sources.instance_variable_get(:@sources).dup
+    public_ids_declared = Graphiti.public_ids_declared?
+    setup_was = Graphiti.setup?
+    example.run
+  ensure
+    Graphiti.resources.replace(registered)
+    Graphiti.public_id_sources.instance_variable_get(:@sources).replace(public_id_sources)
+    Graphiti.public_ids_declared = public_ids_declared
+    Graphiti.instance_variable_set(:@setup, setup_was)
+  end
+
   config.filter_run_when_matching :focus
 
   config.example_status_persistence_file_path = File.expand_path(".rspec-examples", __dir__)
@@ -45,12 +63,6 @@ if ENV["APPRAISAL_INITIALIZED"]
     # If not running tests for specific file, only run rails tests
     if config.instance_variable_get(:@files_or_directories_to_run) == ["spec"]
       config.pattern = "spec/integration/rails/**/*_spec.rb"
-    end
-  end
-
-  # Avoid checking, because Rails is defined but we dont have autoloading
-  Graphiti::Sideload.class_eval do
-    def check!
     end
   end
 

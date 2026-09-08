@@ -9,13 +9,14 @@ module Graphiti
           opts = args.extract_options!
           type_override = args[0]
 
-          if (att = (attributes[name] || extra_attributes[name]))
+          if (att = attributes[name] || extra_attributes[name])
             # We're opting in to filtering, so force this
             # UNLESS the filter is guarded at the attribute level
             att[:filterable] = true if att[:filterable] == false
 
             aliases = [name, opts[:aliases]].flatten.compact
             operators = FilterOperators.build(self, att[:type], opts, &blk)
+            operators = operators.merge(custom_operators(name)) if opts[:via_attribute_dsl]
 
             case Graphiti::Types[att[:type]][:canonical_name]
             when :boolean
@@ -27,7 +28,7 @@ module Graphiti
             end
 
             required = att[:filterable] == :required || !!opts[:required]
-            schema = !!opts[:via_attribute_dsl] ? att[:schema] : opts[:schema] != false
+            schema = (!!opts[:via_attribute_dsl]) ? att[:schema] : opts[:schema] != false
 
             config[:filters][name.to_sym] = {
               aliases: aliases,
@@ -39,9 +40,10 @@ module Graphiti
               dependencies: opts[:dependent],
               required: required,
               schema: schema,
+              internal: !!opts[:internal],
               operators: operators.to_hash,
-              allow_nil: opts.fetch(:allow_nil, filters_accept_nil_by_default),
-              deny_empty: opts.fetch(:deny_empty, filters_deny_empty_by_default)
+              operators_taking_primary_keys: operators_taking_primary_keys(operators.to_hash),
+              blanks: blanks_for(name, opts)
             }
           elsif (type = args[0])
             attribute name, type, only: [:filterable], allow: opts[:allow]
@@ -132,7 +134,9 @@ module Graphiti
           attribute_option(options, :schema, true)
           options[:type] = type
           options[:proc] = blk
+          options[:proc] ||= public_id_proc if name == :id && publishes_public_id?
           config[:attributes][name] = options
+          guard_public_id_leak!(name)
           apply_attributes_to_serializer
           options[:sortable] ? sort(name) : config[:sorts].delete(name)
 
@@ -141,6 +145,44 @@ module Graphiti
           else
             config[:filters].delete(name)
           end
+        end
+
+        def public_id(name = nil, type = nil, &blk)
+          raise Errors::InvalidPublicId.new(self, "takes a column name or a block, not both") if name && blk
+          raise Errors::InvalidPublicId.new(self, "needs a column name or a block") unless name || blk
+
+          if blk
+            block = Util::PublicIdBlock.new
+            block.instance_eval(&blk)
+            raise Errors::InvalidPublicId.new(self, "block must define both encode and decode") unless block.encoder && block.decoder
+            config[:public_id_encode] = block.encoder
+            config[:public_id_decode] = block.decoder
+          end
+          config[:public_id] = name
+          config[:public_id_type] = type
+          Graphiti.public_ids_declared = true
+          apply_public_id
+        end
+
+        def operators_taking_primary_keys(operators)
+          operators.select { |_, block| block && takes_primary_keys?(block) }.keys
+        end
+
+        def takes_primary_keys?(block)
+          block.parameters.any? { |kind, name| kind == :keyrest || (name == :primary_keys && %i[key keyreq].include?(kind)) }
+        end
+
+        # The hidden filter only ever sees keys Graphiti read off models, so its type is never used to cast anything.
+        def public_id_proc
+          proc { @resource.class.public_id_for(@object) }
+        end
+
+        def apply_public_id
+          attribute :id, config[:public_id_type] || inferred_public_id_type, &public_id_proc
+          attribute :_primary_key, :integer_id, only: [:filterable], schema: false
+          filter :_primary_key, schema: false, internal: true
+          attribute :_public_id, config[:public_id_type] || inferred_public_id_type, only: [:filterable], schema: false
+          filter :_public_id, schema: false, internal: true
         end
 
         def extra_attribute(name, type, options = {}, &blk)
@@ -176,13 +218,18 @@ module Graphiti
           attributes.merge(extra_attributes)
         end
 
+        # An abstract resource has no serializer until a concrete subclass is given one.
         def apply_attributes_to_serializer
+          return unless serializer
+
           serializer.type(type)
           Util::SerializerAttributes.new(self, attributes).apply
         end
         private :apply_attributes_to_serializer
 
         def apply_extra_attributes_to_serializer
+          return unless serializer
+
           Util::SerializerAttributes.new(self, extra_attributes, true).apply
         end
 
@@ -206,6 +253,32 @@ module Graphiti
           end
         end
         private :relationship_option
+
+        # Declaring an attribute regenerates its filter, which must not silently outrank a filter declared by hand.
+        def custom_operators(name)
+          (config[:filters][name]&.[](:operators) || {}).compact
+        end
+        private :custom_operators
+
+        def blanks_for(name, opts)
+          if opts.key?(:deny_empty)
+            DEPRECATOR.warn("The deny_empty: filter option is deprecated. Use blanks: :rejected.")
+            return :rejected if opts[:deny_empty]
+          end
+
+          if opts.key?(:allow_nil)
+            DEPRECATOR.warn("The allow_nil: filter option is deprecated. Use blanks: :null.")
+            return opts[:allow_nil] ? :null : :literal
+          end
+
+          blanks = opts.fetch(:blanks, filter_blanks_treated_as)
+          unless Resource::BLANK_MODES.include?(blanks)
+            raise Errors::InvalidFilterBlanks.new(self, name, blanks)
+          end
+
+          blanks
+        end
+        private :blanks_for
       end
     end
   end

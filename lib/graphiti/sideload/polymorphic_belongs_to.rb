@@ -107,22 +107,51 @@ class Graphiti::Sideload::PolymorphicBelongsTo < Graphiti::Sideload::BelongsTo
     end
   end
 
-  def resolve(parents, query, graph_parent)
-    parents.group_by(&grouper.field_name).each_pair do |group_name, group|
-      next if group_name.nil? || grouper.ignore?(group_name)
+  def resolve(parents, query, graph_parent, &proxy_block)
+    if ::Graphiti::Scope.resolve_synchronously?
+      sync_resolve(parents, query, graph_parent, &proxy_block)
+    else
+      future_resolve(parents, query, graph_parent, &proxy_block).value!
+    end
+  end
 
-      match = ->(c) { c.group_name == group_name.to_sym }
-      if (sideload = children.values.find(&match))
-        duped = remove_invalid_sideloads(sideload.resource, query)
-        sideload.resolve(group, duped, graph_parent)
-      else
-        err = ::Graphiti::Errors::PolymorphicSideloadChildNotFound
-        raise err.new(self, group_name)
+  def future_resolve(parents, query, graph_parent, &proxy_block)
+    promises = []
+    each_resolvable_group(parents, query) do |child, group, child_query|
+      promises << child.future_resolve(group, child_query, graph_parent, &proxy_block)
+    end
+    return promises.first if promises.one?
+
+    executor = ::Graphiti::Scope.global_thread_pool_executor
+    Concurrent::Promises.zip_futures_on(executor, *promises)
+      .rescue_on(executor) do |*reasons|
+        first_error = reasons.find { |reason| reason.is_a?(Exception) }
+        raise first_error
       end
+  end
+
+  def sync_resolve(parents, query, graph_parent, &proxy_block)
+    each_resolvable_group(parents, query) do |child, group, child_query|
+      child.sync_resolve(group, child_query, graph_parent, &proxy_block)
     end
   end
 
   private
+
+  # Group parents by their polymorphic type and yield each group's child
+  # sideload alongside a query pruned to the sideloads that child supports.
+  def each_resolvable_group(parents, query)
+    parents.group_by(&grouper.field_name).each_pair do |group_name, group|
+      next if group_name.nil? || grouper.ignore?(group_name)
+
+      child = children.values.find { |candidate| candidate.group_name == group_name.to_sym }
+      unless child
+        raise ::Graphiti::Errors::PolymorphicSideloadChildNotFound.new(self, group_name)
+      end
+
+      yield child, group, remove_invalid_sideloads(child.resource, query)
+    end
+  end
 
   # We may be requesting a relationship that some subclasses support,
   # but not others. Remove anything we don't support.

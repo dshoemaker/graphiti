@@ -4,8 +4,98 @@ module Graphiti
       extend ActiveSupport::Concern
 
       DEFAULT_MAX_PAGE_SIZE = 1_000
+      LINK_MODES = [true, false, :on_demand].freeze
+      BELONGS_TO_RESOURCE_IDS_MODES = [:foreign_key, :always, :never].freeze
+      BLANK_MODES = [:literal, :null, :rejected].freeze
+
+      # Grouped for the ApplicationResource the install generator writes.
+      SETTING_GROUPS = { # :nodoc:
+        attributes: {
+          attributes_readable_by_default: {default: true},
+          attributes_writable_by_default: {default: true},
+          attributes_sortable_by_default: {default: true},
+          attributes_filterable_by_default: {default: true},
+          attributes_schema_by_default: {default: true},
+          typecast_reads: {default: true}
+        },
+        relationships: {
+          relationships_readable_by_default: {default: true},
+          relationships_writable_by_default: {default: true},
+          relationship_placeholders: {default: false, note: "render placeholders for relationships with no ids and no link"},
+          belongs_to_resource_ids_by_default: {
+            default: :foreign_key,
+            values: BELONGS_TO_RESOURCE_IDS_MODES,
+            invalid: ->(klass, value) { Errors::InvalidBelongsToResourceIds.new(klass, value) }
+          }
+        },
+        filters: {
+          filter_blanks_treated_as: {
+            default: :literal,
+            values: BLANK_MODES,
+            invalid: ->(klass, value) { Errors::InvalidFilterBlanks.new(klass, :filter_blanks_treated_as, value) }
+          }
+        },
+        sorting: {
+          default_sort: {default: nil, note: "per resource, e.g. [{id: :desc}]"}
+        },
+        pagination: {
+          page_default_size: {default: nil, note: "unset falls back to 20"},
+          page_max_size: {default: DEFAULT_MAX_PAGE_SIZE, format: "1_000"},
+          page_cursors: {default: false, note: "render cursors for pagination"},
+          page_links: {
+            default: false,
+            values: LINK_MODES,
+            invalid: ->(klass, value) { Errors::InvalidLinkRendering.new(klass, :page_links, value) }
+          }
+        },
+        endpoints: {
+          validate_requests: {default: true, note: "refuse requests to undeclared endpoints"}
+        },
+        links: {
+          relationship_links: {
+            default: true,
+            values: LINK_MODES,
+            invalid: ->(klass, value) { Errors::InvalidLinkRendering.new(klass, :relationship_links, value) }
+          },
+          validate_links: {default: true, note: "refuse to render links to unroutable endpoints"}
+        }
+      }.freeze
+
+      SETTINGS = SETTING_GROUPS.values.reduce(:merge).freeze # :nodoc:
+
+      DSL_SETTINGS = [:adapter, :base_url, :endpoint_namespace, :model, :remote, :remote_base_url, :type, :polymorphic, :polymorphic_child, :serializer, :graphql_entrypoint, *SETTINGS.keys].freeze # :nodoc:
+
+      UNSET = Object.new.freeze # :nodoc:
+
+      module DslReaders # :nodoc:
+        # Real methods with a default, not define_method with a splat: these readers run per attribute per record.
+        DSL_SETTINGS.each do |name|
+          class_eval <<~RUBY, __FILE__, __LINE__ + 1
+            def #{name}(value = UNSET)
+              value.equal?(UNSET) ? super() : (self.#{name} = value)
+            end
+          RUBY
+        end
+      end
+
+      # Rails 7 class_attribute writers redefine the reader on the receiving class itself, ahead of anything prepended on Resource.
+      READERS_REDEFINED_PER_CLASS = ActiveSupport::VERSION::MAJOR < 8 # :nodoc:
 
       module Overrides
+        include DslReaders
+
+        SETTINGS.each_pair do |name, setting|
+          next unless setting[:values]
+
+          define_method(:"#{name}=") do |val|
+            unless setting[:values].include?(val)
+              raise setting[:invalid].call(self, val)
+            end
+
+            super(val)
+          end
+        end
+
         def serializer=(val)
           if val
             if super(Class.new(val))
@@ -19,6 +109,10 @@ module Graphiti
         def polymorphic=(klasses)
           super
           send(:prepend, Polymorphism)
+        end
+
+        def polymorphic?
+          polymorphic.present?
         end
 
         def type=(val)
@@ -39,6 +133,7 @@ module Graphiti
         # The .stat call stores a proc based on adapter
         # So if we assign a new adapter, reconfigure
         def adapter=(val)
+          val = Adapters.const_get(Adapters.constants.find { |name| name.to_s.underscore == val.to_s }) if val.is_a?(Symbol)
           super
           stat total: [:count]
         end
@@ -46,6 +141,7 @@ module Graphiti
         def remote=(val)
           super
           include ::Graphiti::Resource::Remote
+
           self.endpoint = {
             path: val,
             full_path: val,
@@ -54,8 +150,16 @@ module Graphiti
           }
         end
 
-        def model
-          klass = super
+        def model=(val)
+          super
+          apply_public_id if publishes_public_id?
+          config[:sideloads].each_value { |sideload| sideload.register_public_id_source if eagerly_apply_sideload?(sideload) }
+        end
+
+        def model(value = UNSET)
+          return public_send(:model=, value) unless value.equal?(UNSET)
+
+          klass = super()
           unless klass || abstract_class?
             if (klass = infer_model)
               self.model = klass
@@ -80,48 +184,37 @@ module Graphiti
           :polymorphic,
           :polymorphic_child,
           :serializer,
-          :default_page_size,
-          :default_sort,
-          :max_page_size,
-          :attributes_readable_by_default,
-          :attributes_writable_by_default,
-          :attributes_sortable_by_default,
-          :attributes_filterable_by_default,
-          :attributes_schema_by_default,
-          :relationships_readable_by_default,
-          :relationships_writable_by_default,
-          :filters_accept_nil_by_default,
-          :filters_deny_empty_by_default,
           :graphql_entrypoint,
-          :cursor_paginatable
+          *SETTINGS.keys
 
         class << self
           prepend Overrides
         end
 
+        SETTINGS.each_pair do |name, setting|
+          public_send(:"#{name}=", setting[:default])
+        end
+
         def self.inherited(klass)
           super
+          klass.singleton_class.prepend(DslReaders) if READERS_REDEFINED_PER_CLASS
           klass.config = Util::Hash.deep_dup(config)
           klass.adapter ||= Adapters::Abstract
-          klass.max_page_size ||= DEFAULT_MAX_PAGE_SIZE
           # re-assigning causes a new Class.new
           klass.serializer = (klass.serializer || klass.infer_serializer_superclass)
           klass.type ||= klass.infer_type
           klass.graphql_entrypoint = klass.type.to_s.pluralize.to_sym
-          default(klass, :attributes_readable_by_default, true)
-          default(klass, :attributes_writable_by_default, true)
-          default(klass, :attributes_sortable_by_default, true)
-          default(klass, :attributes_filterable_by_default, true)
-          default(klass, :attributes_schema_by_default, true)
-          default(klass, :relationships_readable_by_default, true)
-          default(klass, :relationships_writable_by_default, true)
-          default(klass, :filters_accept_nil_by_default, false)
-          default(klass, :filters_deny_empty_by_default, false)
-
           unless klass.config[:attributes][:id]
             klass.attribute :id, :integer_id
           end
           klass.stat total: [:count]
+
+          # An abstract parent has no serializer for its sideloads, so the subclass applies them here.
+          if abstract_class?
+            klass.config[:sideloads].each_pair do |name, sideload|
+              klass.apply_sideload_to_serializer(name) if klass.eagerly_apply_sideload?(sideload)
+            end
+          end
 
           if defined?(::Rails) && ::Rails.env.development?
             # Avoid adding dupe resources when re-autoloading
@@ -132,6 +225,142 @@ module Graphiti
       end
 
       class_methods do
+        # Deprecated. Both folded into filter_blanks_treated_as. Remove in 3.0.
+        def filters_accept_nil_by_default
+          filter_blanks_treated_as == :null
+        end
+
+        def filters_accept_nil_by_default=(val)
+          self.filter_blanks_treated_as = val ? :null : :literal
+        end
+
+        def filters_deny_empty_by_default
+          filter_blanks_treated_as == :rejected
+        end
+
+        def filters_deny_empty_by_default=(val)
+          self.filter_blanks_treated_as = val ? :rejected : :literal
+        end
+
+        # Deprecated. Renamed to the page_ family. Remove in 3.0.
+        def default_page_size
+          page_default_size
+        end
+
+        def default_page_size=(val)
+          self.page_default_size = val
+        end
+
+        def max_page_size
+          page_max_size
+        end
+
+        def max_page_size=(val)
+          self.page_max_size = val
+        end
+
+        def cursor_paginatable
+          page_cursors
+        end
+
+        def cursor_paginatable=(val)
+          self.page_cursors = val
+        end
+
+        def cursor_paginatable?
+          !!page_cursors
+        end
+
+        def publishes_public_id?
+          !!(config[:public_id] || config[:public_id_encode])
+        end
+
+        def public_id_attribute?(name)
+          !!config[:public_id] && [:id, :_public_id].include?(name.to_sym)
+        end
+
+        def model_declared?
+          !!model
+        rescue Errors::ModelNotFound
+          false
+        end
+
+        def public_id_for(model)
+          if (encode = config[:public_id_encode])
+            encode.call(model.send(model_primary_key))
+          else
+            model.send(config[:public_id])
+          end
+        end
+
+        def model_attribute_for(name)
+          return name unless publishes_public_id?
+
+          case name
+          when :id then config[:public_id] || model_primary_key
+          when :_primary_key then model_primary_key
+          when :_public_id then config[:public_id]
+          else name
+          end
+        end
+
+        def model_primary_key
+          if model.respond_to?(:primary_key)
+            model.primary_key.to_sym
+          else
+            :id
+          end
+        end
+
+        def inferred_public_id_type
+          column = config[:public_id]
+          return :string unless column && model_loaded? && model.respond_to?(:type_for_attribute)
+
+          case model.type_for_attribute(column.to_s).type
+          when :integer then :integer
+          when :uuid then :uuid
+          else :string
+          end
+        end
+
+        def model_loaded?
+          model
+          true
+        rescue Errors::ModelNotFound
+          false
+        end
+
+        def guard_public_id_leak!(attribute_name)
+          return if attribute_name.to_sym == :id
+
+          attribute = attributes[attribute_name.to_sym]
+          return unless attribute && attribute[:readable] && !attribute[:proc]
+
+          source = public_id_source_for(attribute_name)
+          raise Errors::PublicIdLeak.new(self, attribute_name, source) if source
+        end
+
+        # A custom block owns its value, so the generated link can only carry a public id if the block asked to decode it.
+        def filter_accepts_public_ids?(filter_name)
+          filter = filters[filter_name.to_sym]
+          return false unless filter
+
+          filter[:operators][:eq].nil? || Array(filter[:operators_taking_primary_keys]).include?(:eq)
+        end
+
+        def public_id_source_for(filter_name)
+          return unless Graphiti.public_ids_declared?
+
+          name = filter_name.to_sym
+          return self if name == :id && config[:public_id_decode]
+
+          source = Graphiti.public_id_sources[self, name]
+          return source if source
+
+          sideload = sideloads.values.find { |candidate| candidate.type == :belongs_to && candidate.foreign_key == name }
+          sideload.resource_class if sideload&.primary_key_filter == :_primary_key
+        end
+
         def get_attr!(name, flag, opts = {})
           opts[:raise_error] = true
           get_attr(name, flag, opts)
@@ -144,11 +373,11 @@ module Graphiti
         end
 
         def abstract_class?
-          !!abstract_class
+          !!@abstract_class
         end
 
         def abstract_class
-          @abstract_class
+          self.abstract_class = true
         end
 
         def abstract_class=(val)
@@ -187,14 +416,6 @@ module Graphiti
 
           serializer_class
         end
-
-        def default(object, attr, value)
-          prior = object.send(attr)
-          unless prior || prior == false
-            object.send(:"#{attr}=", value)
-          end
-        end
-        private :default
 
         def config
           @config ||=
@@ -315,5 +536,20 @@ module Graphiti
         self.class.default_filters
       end
     end
+
+    blanks_msg = "Use `self.filter_blanks_treated_as` (:literal, :null, or :rejected)"
+    page_msg = "Use `self.page_default_size`, `self.page_max_size` and `self.page_cursors`"
+    DEPRECATOR.deprecate_methods(Configuration::ClassMethods,
+      filters_accept_nil_by_default: blanks_msg,
+      "filters_accept_nil_by_default=": blanks_msg,
+      filters_deny_empty_by_default: blanks_msg,
+      "filters_deny_empty_by_default=": blanks_msg,
+      default_page_size: page_msg,
+      "default_page_size=": page_msg,
+      max_page_size: page_msg,
+      "max_page_size=": page_msg,
+      cursor_paginatable: page_msg,
+      "cursor_paginatable=": page_msg,
+      cursor_paginatable?: page_msg)
   end
 end

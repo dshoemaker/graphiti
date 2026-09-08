@@ -1,6 +1,6 @@
 if ENV["APPRAISAL_INITIALIZED"]
   RSpec.describe "persistence", type: :controller do
-    include GraphitiSpecHelpers
+    include Graphiti::SpecHelpers
 
     # defined in spec/supports/rails/employee_controller.rb
     controller(ApplicationController, &EMPLOYEE_CONTROLLER_BLOCK)
@@ -109,7 +109,7 @@ if ENV["APPRAISAL_INITIALIZED"]
       context "when reserved parameter used" do
         before do
           resource = Class.new(EmployeeResource) do
-            self.validate_endpoints = false
+            self.validate_requests = false
             attribute :page, :integer
           end
           allow(controller).to receive(:resource) { resource }
@@ -163,6 +163,49 @@ if ENV["APPRAISAL_INITIALIZED"]
           expect {
             make_request
           }.to raise_error(Graphiti::Errors::ConflictRequest)
+        end
+      end
+
+      # A writable guard can accept the model being written, so policy objects
+      # can make per-record decisions. On update that is the persisted record,
+      # loaded before the incoming attributes are applied.
+      context "when a writable guard accepts the model" do
+        let(:guard_arguments) { [] }
+
+        before do
+          captured = guard_arguments
+          guarded = Class.new(EmployeeResource) do
+            def self.name
+              "EmployeeResource"
+            end
+
+            attribute :first_name, :string, writable: :editable?
+
+            define_method(:editable?) do |record, attribute_name|
+              captured << [record, attribute_name]
+              record.first_name != "locked"
+            end
+          end
+          allow(controller).to receive(:resource) { guarded }
+        end
+
+        it "receives the persisted record and the attribute name" do
+          make_request
+          record, attribute_name = guard_arguments.first
+          expect(record).to be_a(Employee)
+          expect(record.id).to eq(employee.id)
+          expect(record.first_name).to eq("Joe")
+          expect(attribute_name).to eq("first_name")
+        end
+
+        context "and the guard rejects the record" do
+          let(:employee) { Employee.create(first_name: "locked") }
+
+          it "refuses the write" do
+            expect { make_request }
+              .to raise_error(Graphiti::Errors::InvalidRequest)
+            expect(employee.reload.first_name).to eq("locked")
+          end
         end
       end
     end
@@ -220,7 +263,7 @@ if ENV["APPRAISAL_INITIALIZED"]
       context "when has_many" do
         let(:klass) do
           Class.new(EmployeeResource) do
-            self.validate_endpoints = false
+            self.validate_requests = false
           end
         end
 
@@ -240,7 +283,7 @@ if ENV["APPRAISAL_INITIALIZED"]
               relationships: {
                 positions: {
                   data: [{
-                    'temp-id': "abc123",
+                    "temp-id": "abc123",
                     type: "positions",
                     method: "create"
                   }]
@@ -249,7 +292,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             },
             included: [
               {
-                'temp-id': "abc123",
+                "temp-id": "abc123",
                 type: "positions",
                 attributes: {title: "foo"}
               }
@@ -267,7 +310,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             make_request
           }.to(raise_error { |e|
             expect(e).to be_a Graphiti::Errors::InvalidRequest
-            expect(e.errors.full_messages).to eq ["data.relationships.positions is unwritable relationship"]
+            expect(e.errors.full_messages).to eq ["data.relationships.positions cannot be written"]
           })
         end
       end
@@ -275,7 +318,7 @@ if ENV["APPRAISAL_INITIALIZED"]
       context "when belongs_to" do
         let(:klass) do
           Class.new(EmployeeResource) do
-            self.validate_endpoints = false
+            self.validate_requests = false
             belongs_to :classification, writable: false
           end
         end
@@ -309,7 +352,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             make_request
           }.to(raise_error { |e|
             expect(e).to be_a Graphiti::Errors::InvalidRequest
-            expect(e.errors.full_messages).to eq ["data.relationships.classification is unwritable relationship"]
+            expect(e.errors.full_messages).to eq ["data.relationships.classification cannot be written"]
           })
         end
       end
@@ -320,7 +363,7 @@ if ENV["APPRAISAL_INITIALIZED"]
 
       let(:klass) do
         Class.new(EmployeeResource) do
-          self.validate_endpoints = false
+          self.validate_requests = false
 
           after_graph_persist do |model|
             model.valid?(:after_graph_persisted)
@@ -347,20 +390,20 @@ if ENV["APPRAISAL_INITIALIZED"]
             relationships: {
               positions: {
                 data: [
-                  {'temp-id': "pos1", type: "positions", method: "create"},
-                  {'temp-id': "pos2", type: "positions", method: "create"}
+                  {"temp-id": "pos1", type: "positions", method: "create"},
+                  {"temp-id": "pos2", type: "positions", method: "create"}
                 ]
               }
             }
           },
           included: [
             {
-              'temp-id': "pos1",
+              "temp-id": "pos1",
               type: "positions",
               attributes: {title: "foo"}
             },
             {
-              'temp-id': "pos2",
+              "temp-id": "pos2",
               type: "positions",
               attributes: {title: "bar"}
             }
@@ -407,7 +450,7 @@ if ENV["APPRAISAL_INITIALIZED"]
       context "when belongs_to" do
         let(:klass) do
           Class.new(EmployeeResource) do
-            self.validate_endpoints = false
+            self.validate_requests = false
             attribute :classification_id, :integer, writable: false
           end
         end
@@ -475,7 +518,7 @@ if ENV["APPRAISAL_INITIALIZED"]
       context "when has_many" do
         let(:klass) do
           Class.new(EmployeeResource) do
-            self.validate_endpoints = false
+            self.validate_requests = false
           end
         end
 
@@ -498,7 +541,7 @@ if ENV["APPRAISAL_INITIALIZED"]
               relationships: {
                 positions: {
                   data: [{
-                    'temp-id': "abc123",
+                    "temp-id": "abc123",
                     type: "positions",
                     method: "create"
                   }]
@@ -507,7 +550,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             },
             included: [
               {
-                'temp-id': "abc123",
+                "temp-id": "abc123",
                 type: "positions",
                 attributes: {title: "foo"}
               }
@@ -561,7 +604,7 @@ if ENV["APPRAISAL_INITIALIZED"]
               relationships: {
                 salary: {
                   data: {
-                    'temp-id': "abc123",
+                    "temp-id": "abc123",
                     type: "salaries",
                     method: "create"
                   }
@@ -570,7 +613,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             },
             included: [
               {
-                'temp-id': "abc123",
+                "temp-id": "abc123",
                 type: "salaries",
                 attributes: {
                   base_rate: 15.00,
@@ -747,13 +790,13 @@ if ENV["APPRAISAL_INITIALIZED"]
             relationships: {
               positions: {
                 data: [
-                  {type: "positions", 'temp-id': "pos1", method: "create"},
-                  {type: "positions", 'temp-id': "pos2", method: "create"}
+                  {type: "positions", "temp-id": "pos1", method: "create"},
+                  {type: "positions", "temp-id": "pos2", method: "create"}
                 ]
               },
               teams: {
                 data: [
-                  {type: "teams", 'temp-id': "team1", method: "create"}
+                  {type: "teams", "temp-id": "team1", method: "create"}
                 ]
               }
             }
@@ -761,27 +804,27 @@ if ENV["APPRAISAL_INITIALIZED"]
           included: [
             {
               type: "positions",
-              'temp-id': "pos1",
+              "temp-id": "pos1",
               attributes: {title: "specialist"},
               relationships: {
                 department: {
-                  data: {type: "departments", 'temp-id': "dep1", method: "create"}
+                  data: {type: "departments", "temp-id": "dep1", method: "create"}
                 }
               }
             },
             {
               type: "departments",
-              'temp-id': "dep1",
+              "temp-id": "dep1",
               attributes: {name: "safety"}
             },
             {
               type: "positions",
-              'temp-id': "pos2",
+              "temp-id": "pos2",
               attributes: {title: "manager"}
             },
             {
               type: "teams",
-              'temp-id': "team1",
+              "temp-id": "team1",
               attributes: {name: "Team 1"}
             }
           ]
@@ -1123,9 +1166,9 @@ if ENV["APPRAISAL_INITIALIZED"]
       # NB - should only sideload updated position, not all positions
       it "sideloads the objects in response" do
         make_request
-        expect(included("positions").length).to eq(1)
-        expect(included("positions")[0].id).to eq(position2.id)
-        expect(included("departments").length).to eq(1)
+        expect(jsonapi_included("positions").length).to eq(1)
+        expect(jsonapi_included("positions")[0].id).to eq(position2.id)
+        expect(jsonapi_included("departments").length).to eq(1)
       end
     end
 
@@ -1225,26 +1268,26 @@ if ENV["APPRAISAL_INITIALIZED"]
             relationships: {
               positions: {
                 data: [
-                  {'temp-id': "a", type: "positions", method: "create"}
+                  {"temp-id": "a", type: "positions", method: "create"}
                 ]
               }
             }
           },
           included: [
             {
-              'temp-id': "a",
+              "temp-id": "a",
               type: "positions",
               attributes: {},
               relationships: {
                 department: {
                   data: {
-                    'temp-id': "b", type: "departments", method: "create"
+                    "temp-id": "b", type: "departments", method: "create"
                   }
                 }
               }
             },
             {
-              'temp-id': "b",
+              "temp-id": "b",
               type: "departments",
               attributes: {}
             }
@@ -1342,7 +1385,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             relationships: {
               teams: {
                 data: [
-                  {'temp-id': "abc123", type: "teams", method: "create"},
+                  {"temp-id": "abc123", type: "teams", method: "create"},
                   {id: prior_team.id.to_s, type: "teams", method: "update"},
                   {id: disassociate_team.id.to_s, type: "teams", method: "disassociate"},
                   {id: destroy_team.id.to_s, type: "teams", method: "destroy"},
@@ -1353,7 +1396,7 @@ if ENV["APPRAISAL_INITIALIZED"]
           },
           included: [
             {
-              'temp-id': "abc123",
+              "temp-id": "abc123",
               type: "teams",
               attributes: {name: "Team #1"}
             },
@@ -1404,20 +1447,20 @@ if ENV["APPRAISAL_INITIALIZED"]
             relationships: {
               tasks: {
                 data: [
-                  {'temp-id': "abc123", type: "features", method: "create"},
-                  {'temp-id': "abc456", type: "bugs", method: "create"}
+                  {"temp-id": "abc123", type: "features", method: "create"},
+                  {"temp-id": "abc456", type: "bugs", method: "create"}
                 ]
               }
             }
           },
           included: [
             {
-              'temp-id': "abc123",
+              "temp-id": "abc123",
               type: "features",
               attributes: {name: "test feature"}
             },
             {
-              'temp-id': "abc456",
+              "temp-id": "abc456",
               type: "bugs",
               attributes: {name: "test bug"}
             }
@@ -1464,7 +1507,7 @@ if ENV["APPRAISAL_INITIALIZED"]
 
       context "when creating" do
         let(:location_id) { "abc123" }
-        let(:location_id_key) { :'temp-id' }
+        let(:location_id_key) { :"temp-id" }
         let(:method) { "create" }
 
         it "works" do
@@ -1552,12 +1595,23 @@ if ENV["APPRAISAL_INITIALIZED"]
 
       context "when creating" do
         let(:note_id) { "abc123" }
-        let(:note_id_key) { :'temp-id' }
+        let(:note_id_key) { :"temp-id" }
         let(:method) { "create" }
 
         it "works" do
           make_request
           expect(employee.reload.notes.map(&:body)).to eq(["foo"])
+        end
+
+        context "and the parent overrides polymorphic_name" do
+          before do
+            allow(Employee).to receive(:polymorphic_name).and_return("Staff")
+          end
+
+          it "stores the overridden name as the type" do
+            make_request
+            expect(Note.last.notable_type).to eq("Staff")
+          end
         end
       end
 
@@ -1625,7 +1679,7 @@ if ENV["APPRAISAL_INITIALIZED"]
             relationships: {
               workspace: {
                 data: {
-                  'temp-id': "work1", type: workspace_type, method: "create"
+                  "temp-id": "work1", type: workspace_type, method: "create"
                 }
               }
             }
@@ -1633,7 +1687,7 @@ if ENV["APPRAISAL_INITIALIZED"]
           included: [
             {
               type: workspace_type,
-              'temp-id': "work1",
+              "temp-id": "work1",
               attributes: {
                 address: "Fake Workspace Address"
               }
@@ -1703,6 +1757,80 @@ if ENV["APPRAISAL_INITIALIZED"]
         expect(employee.positions.count).to eq(3)
         expect { make_request }.to change { employee.positions.count }.by(-1)
       end
+    end
+  end
+
+  # Applying the payload without saving lets a controller inspect ActiveRecord's
+  # dirty tracking to decide whether the update is permitted at all.
+  # type: :controller only to opt into the DatabaseCleaner hooks in spec_helper
+  RSpec.describe "applying a payload without saving", type: :controller do
+    let!(:employee) { Employee.create!(first_name: "Joe", last_name: "Smith") }
+
+    let(:payload) do
+      {
+        id: employee.id,
+        data: {
+          id: employee.id.to_s,
+          type: "employees",
+          attributes: {first_name: "Jane"}
+        }
+      }
+    end
+
+    around do |e|
+      Graphiti.with_context({}, :update) { e.run }
+    end
+
+    it "leaves the record clean before the payload is applied" do
+      proxy = EmployeeResource.find(payload)
+
+      expect(proxy.data.changed).to eq([])
+      expect(proxy.data.first_name).to eq("Joe")
+    end
+
+    it "reports the changed attributes once the payload is applied" do
+      proxy = EmployeeResource.find(payload)
+      proxy.assign_attributes(payload)
+
+      expect(proxy.data.changed).to eq(["first_name"])
+      expect(proxy.data.first_name_was).to eq("Joe")
+      expect(proxy.data).to be_changed
+    end
+
+    it "does not touch the database" do
+      proxy = EmployeeResource.find(payload)
+      proxy.assign_attributes(payload)
+
+      expect(employee.reload.first_name).to eq("Joe")
+    end
+
+    it "reports the same changes when applied more than once" do
+      proxy = EmployeeResource.find(payload)
+      proxy.assign_attributes(payload)
+      proxy.assign_attributes(payload)
+
+      expect(proxy.data.changed).to eq(["first_name"])
+    end
+
+    it "commits the pending changes on update_attributes" do
+      proxy = EmployeeResource.find(payload)
+      proxy.assign_attributes(payload)
+
+      expect {
+        expect(proxy.update_attributes).to eq(true)
+      }.to change { employee.reload.first_name }.from("Joe").to("Jane")
+
+      expect(proxy.data.changed).to eq([])
+    end
+
+    it "surfaces validation errors without saving" do
+      payload[:data][:attributes][:first_name] = nil
+      proxy = EmployeeResource.find(payload)
+      proxy.assign_attributes(payload)
+
+      expect(proxy.data.valid?).to eq(false)
+      expect(proxy.data.errors.full_messages).to eq(["First name can't be blank"])
+      expect(employee.reload.first_name).to eq("Joe")
     end
   end
 end

@@ -29,6 +29,85 @@ RSpec.describe "filtering" do
     expect(records.map(&:id)).to eq([employee1.id])
   end
 
+  context "when an attribute is declared alongside a custom filter" do
+    # The filter matches on last_name, so it only takes effect if the block survived.
+    def self.custom_filter
+      proc do
+        filter :first_name, :string do
+          eq do |scope, value|
+            scope[:conditions][:last_name] = value
+            scope
+          end
+        end
+      end
+    end
+
+    before { params[:filter] = {first_name: "Christie"} }
+
+    context "and the attribute comes after it" do
+      let(:resource) do
+        blk = self.class.custom_filter
+        Class.new(PORO::EmployeeResource) do
+          def self.name
+            "PORO::EmployeeResource"
+          end
+
+          instance_eval(&blk)
+          attribute :first_name, :string
+        end
+      end
+
+      it "keeps the custom filter" do
+        expect(records.map(&:id)).to eq([employee2.id])
+      end
+    end
+
+    context "and the attribute comes before it" do
+      let(:resource) do
+        blk = self.class.custom_filter
+        Class.new(PORO::EmployeeResource) do
+          def self.name
+            "PORO::EmployeeResource"
+          end
+
+          attribute :first_name, :string
+          instance_eval(&blk)
+        end
+      end
+
+      it "keeps the custom filter" do
+        expect(records.map(&:id)).to eq([employee2.id])
+      end
+    end
+
+    context "and the filter is inherited while the subclass declares the attribute" do
+      let(:resource) do
+        blk = self.class.custom_filter
+        parent = Class.new(PORO::EmployeeResource) do
+          def self.name
+            "PORO::AbstractEmployeeResource"
+          end
+
+          self.abstract_class = true
+          instance_eval(&blk)
+        end
+
+        Class.new(parent) do
+          def self.name
+            "PORO::EmployeeResource"
+          end
+
+          self.model = PORO::Employee
+          attribute :first_name, :string
+        end
+      end
+
+      it "keeps the custom filter" do
+        expect(records.map(&:id)).to eq([employee2.id])
+      end
+    end
+  end
+
   context "retains filtering value" do
     it "when value includes curly brackets" do
       params[:filter] = {first_name: "{{John}}"}
@@ -285,10 +364,30 @@ RSpec.describe "filtering" do
     end
   end
 
-  context "when passed null and filter marked allow_nil: true" do
+  context "when the filter uses the deprecated blank options" do
+    it "maps allow_nil to :null" do
+      resource.filter :first_name, allow_nil: true
+      expect(resource.filters[:first_name][:blanks]).to eq(:null)
+    end
+
+    it "maps deny_empty to :rejected" do
+      resource.filter :first_name, deny_empty: true
+      expect(resource.filters[:first_name][:blanks]).to eq(:rejected)
+    end
+  end
+
+  context "when the filter is given an unknown blanks value" do
+    it "raises" do
+      expect {
+        resource.filter :first_name, blanks: :whatever
+      }.to raise_error(Graphiti::Errors::InvalidFilterBlanks, /must be one of :literal, :null, or :rejected/)
+    end
+  end
+
+  context "when passed null and filter marked blanks: :null" do
     context "with string type" do
       before do
-        resource.filter :first_name, allow_nil: true
+        resource.filter :first_name, blanks: :null
         employee2.update_attributes(first_name: nil)
         params[:filter] = {first_name: "null"}
       end
@@ -296,12 +395,23 @@ RSpec.describe "filtering" do
       it "works" do
         expect(records.map(&:id)).to eq([employee2.id])
       end
+
+      context "with comma-delimited values" do
+        before do
+          employee3.update_attributes(first_name: "Lucy")
+          params[:filter] = {first_name: "null,Lucy"}
+        end
+
+        it "typecasts null to nil" do
+          expect(records.map(&:id)).to eq([employee2.id, employee3.id])
+        end
+      end
     end
 
     context "with integer type" do
       before do
         resource.attribute :age, :integer
-        resource.filter :age, allow_nil: true
+        resource.filter :age, blanks: :null
         employee1.update_attributes(age: 20)
         employee2.update_attributes(age: nil)
         employee3.update_attributes(age: 30)
@@ -327,9 +437,9 @@ RSpec.describe "filtering" do
     end
   end
 
-  context "when passed an empty value when deny_empty is true" do
+  context "when passed a blank value and blanks is :rejected" do
     before do
-      resource.filter :first_name, deny_empty: true
+      resource.filter :first_name, blanks: :rejected
       employee2.update_attributes(first_name: value)
       params[:filter] = {first_name: "null"}
     end
@@ -457,14 +567,14 @@ RSpec.describe "filtering" do
       before do
         params[:filter] = {
           id: employee1.id,
-          'positions.title': "bar"
+          "positions.title": "bar"
         }
         params[:include] = "positions"
       end
 
       it "works" do
         render
-        sl = d[0].sideload(:positions)
+        sl = jsonapi_data[0].sideload(:positions)
         expect(sl.map(&:id)).to eq([pos2.id])
       end
     end
@@ -484,14 +594,14 @@ RSpec.describe "filtering" do
       before do
         params[:filter] = {
           id: employee1.id,
-          'positions.department.name': "bar"
+          "positions.department.name": "bar"
         }
         params[:include] = "positions.department"
       end
 
       it "works" do
         render
-        positions = d[0].sideload(:positions)
+        positions = jsonapi_data[0].sideload(:positions)
         expect(positions[0].sideload(:department)).to be_nil
         expect(positions[1].sideload(:department).id).to eq(department2.id)
       end
@@ -507,7 +617,7 @@ RSpec.describe "filtering" do
 
         it "works" do
           render
-          positions = d[0].sideload(:positions)
+          positions = jsonapi_data[0].sideload(:positions)
           expect(positions[0].sideload(:department).id).to eq(department2.id)
           expect(positions[1].sideload(:department)).to be_nil
         end
@@ -524,7 +634,7 @@ RSpec.describe "filtering" do
 
         it "works" do
           render
-          positions = d[0].sideload(:positions)
+          positions = jsonapi_data[0].sideload(:positions)
           expect(positions.map(&:id)).to eq([2])
           expect(positions[0].sideload(:department).id).to eq(department2.id)
         end
@@ -961,7 +1071,7 @@ RSpec.describe "filtering" do
 
       it "coerces integers" do
         params[:filter] = {foo: 40}
-        assert_filter_value([BigDecimal("40")])
+        assert_filter_value([BigDecimal(40)])
       end
 
       it "coerces strings" do
@@ -1269,6 +1379,17 @@ RSpec.describe "filtering" do
             records
           }.to raise_error(Graphiti::Errors::TypecastFailed)
         end
+      end
+    end
+
+    context "when array_of_strings" do
+      before do
+        resource.attribute :foo, :array_of_strings
+      end
+
+      it "wraps a single query value" do
+        params[:filter] = {foo: "Beef"}
+        assert_filter_value(["Beef"])
       end
     end
 
@@ -1923,6 +2044,31 @@ RSpec.describe "filtering" do
           expect(proxy.data.id).to eq(employee2.id)
         }.to_not raise_error
       end
+    end
+  end
+
+  context "when the requested operator is not supported" do
+    before do
+      resource.filter :first_name, :string, only: :eq
+      params[:filter] = {first_name: {prefix: "Ste"}}
+    end
+
+    it "raises UnsupportedOperator" do
+      expect { records }.to raise_error(
+        Graphiti::Errors::UnsupportedOperator,
+        /Tried to filter :first_name on operator :prefix, but not supported/
+      )
+    end
+
+    # These readers are public API - consumers build their own error messages
+    # from them rather than parsing #message.
+    it "exposes the resource, filter name, operator and supported operators" do
+      expect { records }.to raise_error(Graphiti::Errors::UnsupportedOperator) { |error|
+        expect(error.resource).to be_a(resource)
+        expect(error.filter_name).to eq(:first_name)
+        expect(error.operator).to eq(:prefix)
+        expect(error.supported).to eq([:eq])
+      }
     end
   end
 end

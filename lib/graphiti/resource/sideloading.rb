@@ -23,10 +23,12 @@ module Graphiti
         end
 
         def apply_sideload_to_serializer(name)
+          config[:sideloads][name].register_public_id_source
           Util::SerializerRelationships.new(self, config[:sideloads].slice(name)).apply
         end
 
         def apply_sideloads_to_serializer
+          config[:sideloads].each_value(&:register_public_id_source)
           Util::SerializerRelationships.new(self, config[:sideloads]).apply
         end
 
@@ -126,11 +128,11 @@ module Graphiti
         end
 
         # If eager loading, ensure routes are loaded first, then apply
-        # This happens in Railtie
+        # This happens in Railtie. Setup runs once, so classes redefined by a reload apply at definition.
         def eagerly_apply_sideload?(sideload)
-          # TODO: Maybe handle this in graphiti-rails
+          # TODO: Maybe handle this in the Rails integration
           if defined?(::Rails) && (app = ::Rails.application)
-            app.config.eager_load ? false : true
+            app.config.eager_load ? Graphiti.setup? : true
           else
             sideload.resource_class_loaded?
           end

@@ -61,11 +61,20 @@ module Graphiti
             update_foreign_type(attrs, x, null: true) if x[:is_polymorphic]
           else
             if x[:sideload].polymorphic_has_one? || x[:sideload].polymorphic_has_many?
-              attrs[:"#{x[:sideload].polymorphic_as}_type"] = parent_object.class.name
+              attrs[:"#{x[:sideload].polymorphic_as}_type"] = polymorphic_type_value(parent_object)
             end
-            attrs[x[:foreign_key]] = parent_object.send(x[:primary_key])
+            attrs[x[:foreign_key]] = internal_foreign_key(parent_object.send(x[:primary_key]))
             update_foreign_type(attrs, x) if x[:is_polymorphic]
           end
+        end
+
+        # Resource#assign decodes public ids out of foreign keys, and must leave a key Graphiti resolved itself alone.
+        def internal_foreign_key(value)
+          Graphiti.public_ids_declared? ? Graphiti::Util::InternalParam.new(value) : value
+        end
+
+        def polymorphic_type_value(parent_object)
+          parent_object.class.name
         end
 
         def update_foreign_type(attrs, x, null: false)

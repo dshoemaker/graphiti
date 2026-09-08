@@ -65,43 +65,102 @@ module Graphiti
         def add_callback(kind, lifecycle, method, only, &blk)
           config[:callbacks][kind] ||= {}
           config[:callbacks][kind][lifecycle] ||= []
-          config[:callbacks][kind][lifecycle] << {callback: (method || blk), only: Array(only)}
+          config[:callbacks][kind][lifecycle] << {callback: method || blk, only: Array(only)}
         end
       end
 
-      def create(create_params, meta = nil)
-        model_instance = nil
+      # +model_instance+ is the already-built model from a previous #assign
+      # (see ResourceProxy#assign_attributes). When given, attributes are
+      # applied to it rather than to a freshly built/found model.
+      def assign(assign_params, meta = nil, action_name = nil, model_instance: nil)
+        # Only update strips :id (it identifies the record to find) - a create
+        # payload may legitimately carry a client-supplied id to assign.
+        if action_name == :update
+          id = assign_params[:id]
+          assign_params = assign_params.except(:id)
+        elsif assign_params.key?(:id) && (public_id = self.class.config[:public_id])
+          assign_params = assign_params.except(:id).merge(public_id => assign_params[:id])
+        elsif assign_params.key?(:id) && self.class.config[:public_id_decode]
+          primary_key = self.class.decode_public_id(assign_params[:id])
+          raise Errors::ConflictRequest, unresolvable_id_errors(assign_params) if primary_key.nil?
+          assign_params = assign_params.except(:id).merge(self.class.model_primary_key => primary_key)
+        end
 
-        run_callbacks :persistence, :create, create_params, meta do
-          run_callbacks :attributes, :create, create_params, meta do |params|
-            model_instance = call_with_meta(:build, model, meta)
-            call_with_meta(:assign_attributes, model_instance, params, meta)
-            model_instance
+        assign_params = decode_foreign_keys(assign_params)
+
+        run_callbacks :attributes, action_name, assign_params, meta do |params|
+          model_instance ||= if action_name == :update
+            self.class._find(id: id).data
+          else
+            call_with_meta(:build, model, meta)
           end
+          call_with_meta(:assign_attributes, model_instance, params, meta)
+          model_instance
+        end
 
+        model_instance
+      end
+
+      # The model built by a prior ResourceProxy#assign_attributes, present
+      # for the duration of the save that persists it
+      attr_reader :assigned_model
+
+      # @api private
+      def with_assigned_model(model)
+        @assigned_model = model
+        yield
+      ensure
+        @assigned_model = nil
+      end
+
+      # Attributes are assigned before the persistence callbacks fire, so
+      # around_persistence receives the assigned model - its pre-yield
+      # position is the last chance to touch the model before save, inside
+      # the transaction. Modify attributes in before_attributes instead.
+      def create(create_params, meta = nil)
+        model_instance = assigned_model || assign(create_params, meta, :create)
+
+        run_callbacks :persistence, :create, model_instance, meta do
           run_callbacks :save, :create, model_instance, meta do
             model_instance = call_with_meta(:save, model_instance, meta)
           end
 
           model_instance
         end
+
+        model_instance
+      end
+
+      def decode_foreign_keys(assign_params)
+        return assign_params unless Graphiti.public_ids_declared?
+
+        assign_params.each_with_object({}) do |(name, value), decoded|
+          source = (name == :id || value.nil?) ? nil : self.class.public_id_source_for(name)
+          decoded[name] = if value.is_a?(Util::InternalParam)
+            value.value
+          elsif source
+            source.decode_public_id(value.to_s) or raise Errors::RecordNotFound.new(source.type, value, name)
+          else
+            value
+          end
+        end
+      end
+
+      def unresolvable_id_errors(assign_params)
+        Util::SimpleErrors.new(assign_params).tap do |errors|
+          errors.add("data.id", :unresolvable, message: "does not name a record of this resource")
+        end
       end
 
       def update(update_params, meta = nil)
-        model_instance = nil
-        id = update_params[:id]
-        update_params = update_params.except(:id)
+        model_instance = assigned_model || assign(update_params, meta, :update)
 
-        run_callbacks :persistence, :update, update_params, meta do
-          run_callbacks :attributes, :update, update_params, meta do |params|
-            model_instance = self.class._find(id: id).data
-            call_with_meta(:assign_attributes, model_instance, params, meta)
-            model_instance
-          end
-
+        run_callbacks :persistence, :update, model_instance, meta do
           run_callbacks :save, :update, model_instance, meta do
             model_instance = call_with_meta(:save, model_instance, meta)
           end
+
+          model_instance
         end
 
         model_instance
